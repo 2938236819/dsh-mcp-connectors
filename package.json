@@ -1,6 +1,6 @@
 {
   "name": "@wfm-cn/dsh-mcp-connectors",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "type": "module",
   "exports": {
     ".": "./index.js",

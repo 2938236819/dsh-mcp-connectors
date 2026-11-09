@@ -5,7 +5,7 @@ DeepSeek Harness (DSH) 的 MCP 连接器中心插件：统一管理 MCP 连接�
 ## 功能
 
 - **连接器面板**：卡片式添加 / 编辑 / 启停 MCP 连接器（streamable-http / stdio / 企业微信）
-- **内置预设**：腾讯文档、金山文档（WPS 授权登录）、GitHub（PAT）、微信 (ClawBot)
+- **内置预设**：腾讯文档、金山文档（WPS 授权登录）、GitHub（PAT）、微信 (ClawBot)、谷歌浏览器（Chrome DevTools MCP，本机 stdio 运行，无需令牌）
 - **微信收发**：基于微信官方 ClawBot 机器人接口，扫码绑定后双向收发消息（文本 / 图片 / 文件）
 - **微信自动回复**：守护轮询收消息（无 LLM 开销），新消息自动注入绑定的 DSH 会话，AI 基于该会话上下文回复
 - **会话级门控**：每个 DSH 会话可选择启用哪些连接器的工具（以 `mcp__<server>__<tool>` 前缀注入）

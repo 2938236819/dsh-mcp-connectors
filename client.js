@@ -53,6 +53,8 @@ window.__ModuleLoader__.load({
         wxConfirmOnPhone: '已扫码，请在手机上确认登录…',
         wxBindTimeout: '绑定未完成，请重新点击扫码绑定',
         presetWechat: '微信 (ClawBot)',
+        presetChrome: '谷歌浏览器（Chrome DevTools · 本机运行）',
+        chromeHint: '无需令牌。保存后自动通过 npx 启动 chrome-devtools-mcp 并连接本机谷歌浏览器；首次使用请确保已安装 Chrome。',
         testConn: '测试连接',
         testing: '测试中',
         fieldEnv: '环境变量（每行 KEY=value）',
@@ -108,6 +110,8 @@ window.__ModuleLoader__.load({
         wxConfirmOnPhone: 'Scanned — confirm login on your phone…',
         wxBindTimeout: 'Not completed. Click the button to try again',
         presetWechat: 'WeChat (ClawBot)',
+        presetChrome: 'Google Chrome (Chrome DevTools · local)',
+        chromeHint: 'No token needed. Saving launches chrome-devtools-mcp via npx and connects to your local Chrome; make sure Chrome is installed.',
         testConn: 'Test connection',
         testing: 'Testing',
         fieldEnv: 'Environment variables (KEY=value per line)',
@@ -187,6 +191,14 @@ window.__ModuleLoader__.load({
         },
       },
       {
+        id: 'chrome',
+        labelKey: 'presetChrome',
+        template: {
+          title: '谷歌浏览器', serverName: 'chrome-devtools', transport: 'stdio',
+          command: 'npx', args: ['-y', 'chrome-devtools-mcp@latest'],
+        },
+      },
+      {
         id: 'custom',
         labelKey: 'presetCustom',
         template: { title: '', serverName: '', transport: 'streamable-http', url: '' },
@@ -203,6 +215,7 @@ window.__ModuleLoader__.load({
       if (c.type) return c.type;
       const sn = String(c.serverName ?? '');
       const url = String(c.url ?? '');
+      if (sn === 'chrome-devtools' || /chrome-devtools-mcp/.test(`${c.command ?? ''} ${(c.args ?? []).join(' ')}`)) return 'chrome';
       if (c.auth === 'wxqr' || sn === 'weixin-mcp') return 'wechat';
       if (c.auth === 'wps' || sn === 'kdocs-wps' || /mcp-center\.wps\.cn/.test(url)) return 'kdocs';
       if (c.auth === 'pat' || sn === 'github' || /api\.githubcopilot\.com/.test(url)) return 'github';
@@ -421,6 +434,9 @@ window.__ModuleLoader__.load({
                 }, t('getTokenHint'))))
           : h(React.Fragment, null,
               // 预设类型：只显示该类型自己的字段
+              ctype === 'chrome'
+                ? h('div', { className: 'mcx-auth-hint' }, t('chromeHint'))
+                : null,
               ctype === 'github'
                 ? h(React.Fragment, null,
                     h(Field, { label: t('fieldToken') }, h('input', { className: inputCls, type: 'password', value: draft.token === '●' ? '' : draft.token ?? '', onChange: set('token'), placeholder: initial?.token === '●' ? '已保存 · 留空保持不变' : 'github_pat_…' })),
@@ -431,8 +447,7 @@ window.__ModuleLoader__.load({
                     }, t('githubCreateBtn')))
                 : null,
               ctype === 'wechat'
-                ? h(React.Fragment, null,
-                    h(WechatSessionPicker, { t, api, value: draft.targetSession ?? '', onChange: (v) => setDraft((d) => ({ ...d, targetSession: v })) }),
+                ? h(React.Fragment, null,                    h(WechatSessionPicker, { t, api, value: draft.targetSession ?? '', onChange: (v) => setDraft((d) => ({ ...d, targetSession: v })) }),
                     h(WechatQrAuth, { t, api, onSaved, onSave: () => doSave(false), busy: authBusy, setBusy: setAuthBusy, msg: authMsg, setMsg: setAuthMsg, isNew, initialServerName: initial?.serverName }))
                 : null,
               ctype === 'kdocs'
