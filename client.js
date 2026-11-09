@@ -68,7 +68,8 @@ window.__ModuleLoader__.load({
         presetCustom: '自定义 / 其他 MCP 服务',
         composerOpen: '连接器',
         composerNone: '当前会话未启用任何连接器',
-        composerAll: '全部',
+        selectAll: '全选',
+        deselectAll: '全部取消',
         loadFailed: '加载失败',
         retry: '重试',
         hint: '工具将以 mcp__<标识>__<工具名> 出现在会话中。',
@@ -125,7 +126,8 @@ window.__ModuleLoader__.load({
         presetCustom: 'Custom MCP server',
         composerOpen: 'Connectors',
         composerNone: 'No connector enabled in this conversation',
-        composerAll: 'All',
+        selectAll: 'Select all',
+        deselectAll: 'Deselect all',
         loadFailed: 'Failed to load',
         retry: 'Retry',
         hint: 'Tools appear as mcp__<server>__<tool> in conversations.',
@@ -631,12 +633,26 @@ window.__ModuleLoader__.load({
         const next = new Set(chosen);
         if (next.has(sn)) next.delete(sn); else next.add(sn);
         const r = await api.setSession({ sessionId, enabled: [...next] });
-        if (r.ok) setData((d) => ({ ...d, sessions: { ...(d?.sessions ?? {}), [sessionId]: [...next] } }));
+        if (r.ok) applySession(next);
       };
-      const selectAll = async () => {
-        if (!api) return;
-        const r = await api.setSession({ sessionId, enabled: enabledConnectors.map((c) => c.serverName) });
-        if (r.ok) setData((d) => ({ ...d, sessions: { ...(d?.sessions ?? {}), [sessionId]: [] } }));
+      /** 与后端 POST /session 的落盘规则保持镜像：全选时删除会话记录（=默认全启用），否则保存列表 */
+      const applySession = (nextSet) => {
+        setData((d) => {
+          const sessions = { ...(d?.sessions ?? {}) };
+          const allOn = enabledConnectors.length > 0
+            && enabledConnectors.every((c) => nextSet.has(c.serverName));
+          if (allOn) delete sessions[sessionId];
+          else sessions[sessionId] = [...nextSet];
+          return { ...d, sessions };
+        });
+      };
+      const allOn = Boolean(chosen) && enabledConnectors.length > 0
+        && enabledConnectors.every((c) => chosen.has(c.serverName));
+      const toggleAll = async () => {
+        if (!sessionId || !api || !chosen) return;
+        const next = allOn ? new Set() : new Set(enabledConnectors.map((c) => c.serverName));
+        const r = await api.setSession({ sessionId, enabled: [...next] });
+        if (r.ok) applySession(next);
       };
 
       return h('div', { className: 'mcx-composer', ref: wrapRef },
@@ -652,7 +668,7 @@ window.__ModuleLoader__.load({
             : h(React.Fragment, null,
                 h('div', { className: 'mcx-popover-head' },
                   h('span', null, t('composerOpen')),
-                  h('button', { type: 'button', className: 'mcx-chipbtn', onClick: selectAll }, t('composerAll'))),
+                  h('button', { type: 'button', className: 'mcx-chipbtn', onClick: toggleAll }, t(allOn ? 'deselectAll' : 'selectAll'))),
                 enabledConnectors.map((c) => h('label', { key: c.id, className: 'mcx-popover-row' },
                   h('input', {
                     type: 'checkbox',
