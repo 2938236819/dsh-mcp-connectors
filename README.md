@@ -56,5 +56,5 @@ MIT
 
 缓解措施：
 - skill 文档已加"会话权限红线"并将触发条件收窄为"维护插件本身"，普通数据请求不再加载该文档
-- token/secret 全部迁入 macOS 钥匙串（`dsh-mcp-connectors` service item），json 只存 `tokenRef` 标记；bash 读文件已拿不到任何凭据
+- token/secret 存入跨平台凭据保险箱：macOS 钥匙串 / Windows 凭据管理器 / Linux secret-tool（无保险箱时降级为机器指纹派生密钥的 AES-256-GCM 加密文件）；json 只存 `tokenRef` 标记，磁盘零明文，三平台行为一致
 - 彻底阻断需要平台层支持（会话沙箱禁网/禁读 HOME），插件层无法完全防御

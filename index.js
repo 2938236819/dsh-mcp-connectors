@@ -14,8 +14,8 @@
 import { readFileSync, writeFileSync, mkdirSync, appendFileSync, readdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
-import { homedir } from 'node:os';
-import { randomUUID, createHash } from 'node:crypto';
+import { homedir, platform } from 'node:os';
+import { randomUUID, createHash, pbkdf2Sync, createCipheriv, createDecipheriv } from 'node:crypto';
 
 const DEBUG_LOG = `${homedir()}/.dsh/mcp-connectors-debug.log`;
 function dbg(msg, err) {
@@ -24,37 +24,168 @@ function dbg(msg, err) {
   } catch { /* never break plugin */ }
 }
 
-/* ---------------- 凭据保险箱：macOS 钥匙串 ----------------
- * token/secret 绝不落盘明文。json 只存 tokenRef/secretRef 标记，
- * 运行时按需从登录钥匙串读取。其他进程（含 AI 的 bash）读 json 拿不到任何凭据。 */
-const KEYCHAIN_SERVICE = 'dsh-mcp-connectors';
+/* ---------------- 凭据保险箱：跨平台，磁盘零明文 ----------------
+ * token/secret 绝不落盘明文。json 只存 tokenRef/secretRef 标记，运行时按需读取：
+ *   darwin  → 登录钥匙串（security）
+ *   win32   → 凭据管理器（PowerShell P/Invoke CredRead/CredWrite）
+ *   linux   → secret-tool（GNOME Keyring / KWallet）
+ *   兜底    → 机器指纹派生密钥的 AES-256-GCM 加密文件（磁盘仍无明文，强度降级）
+ * 上层统一走 credSet/credGet/credDelete + 内存缓存，无平台差异。 */
+const CRED_SERVICE = 'dsh-mcp-connectors';
+const CRED_CACHE = new Map(); // 'kind:serverName' -> value（进程内缓存，避免重复拉起子进程）
+let CRED_MODE = null; // 'keychain' | 'credman' | 'secret' | 'vault'
 
-function kcArgs(kind, serverName) {
-  return ['-s', KEYCHAIN_SERVICE, '-a', `${kind}:${serverName}`];
+function credMode() {
+  if (CRED_MODE) return CRED_MODE;
+  const p = platform();
+  if (p === 'darwin') CRED_MODE = 'keychain';
+  else if (p === 'win32') CRED_MODE = 'credman';
+  else {
+    try { execFileSync('secret-tool', ['--version'], { stdio: 'ignore' }); CRED_MODE = 'secret'; }
+    catch { CRED_MODE = 'vault'; }
+  }
+  dbg(`cred store mode: ${CRED_MODE} (${p})`);
+  return CRED_MODE;
 }
 
-function keychainSet(kind, serverName, value) {
+function credKey(kind, serverName) { return `${kind}:${serverName}`; }
+
+/* --- Windows 凭据管理器（P/Invoke，无需任何依赖） --- */
+const WIN_CRED_PS = `
+using System;using System.Runtime.InteropServices;
+public class CredMan{
+ [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
+ public static extern bool CredWriteW(ref CREDENTIAL cred,uint flags);
+ [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
+ public static extern bool CredReadW(string target,int type,uint flags,out IntPtr cred);
+ [DllImport("advapi32.dll")]
+ public static extern void CredFree(IntPtr cred);
+ [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]
+ public class CREDENTIAL{public uint Flags;public uint Type;public string TargetName;public string Comment;public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;public uint CredentialBlobSize;public IntPtr CredentialBlob;public uint Persist;public uint AttributeCount;public IntPtr Attributes;public string TargetAlias;public string UserName;}
+ public static void Write(string t,string v){
+  byte[] b=System.Text.Encoding.UTF8.GetBytes(v);GCHandle h=GCHandle.Alloc(b,GCHandleType.Pinned);
+  var c=new CREDENTIAL();c.Type=1;c.TargetName=t;c.CredentialBlobSize=(uint)b.Length;c.CredentialBlob=h.AddrOfPinnedObject();c.Persist=2;c.UserName="dsh";
+  if(!CredWriteW(ref c,0))throw new Exception("CredWriteW err "+Marshal.GetLastWin32Error());h.Free();}
+ public static string Read(string t){
+  IntPtr p;if(!CredReadW(t,1,0,out p))return null;
+  var c=(CREDENTIAL)Marshal.PtrToStructure(p,typeof(CREDENTIAL));
+  byte[] b=new byte[c.CredentialBlobSize];Marshal.Copy(c.CredentialBlob,b,0,b.Length);CredFree(p);
+  return System.Text.Encoding.UTF8.GetString(b);}
+}`;
+
+function credmanRun(psExpr) {
+  const args = ['-NoProfile', '-NonInteractive', '-Command',
+    `Add-Type -TypeDefinition '${WIN_CRED_PS.replace(/'/g, "''")}'; ${psExpr}`];
+  return execFileSync('powershell.exe', args, { encoding: 'utf8', timeout: 20000 }).trim();
+}
+
+/* --- 兜底加密文件（机器指纹派生密钥） --- */
+const VAULT_FILE = () => `${homedir()}/.dsh/mcp-connectors.vault`;
+function vaultKey() {
+  let mid = '';
   try {
-    execFileSync('security', ['add-generic-password', ...kcArgs(kind, serverName), '-w', value, '-U'], { stdio: 'ignore' });
+    if (platform() === 'darwin') {
+      mid = execFileSync('ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], { encoding: 'utf8' })
+        .split('\n').find((l) => l.includes('IOPlatformUUID'))?.split('"').slice(-2)[0] ?? '';
+    } else if (platform() === 'win32') {
+      mid = execFileSync('reg', ['query', 'HKLM\\SOFTWARE\\Microsoft\\Cryptography', '/v', 'MachineGuid'], { encoding: 'utf8' })
+        .split('\n').find((l) => l.includes('REG_SZ'))?.trim().split(/\s+/).pop() ?? '';
+    } else {
+      mid = readFileSync('/etc/machine-id', 'utf8').trim();
+    }
+  } catch { /* 指纹不可用时退化为静态派生（仍是加密文件，防顺手读取） */ }
+  return pbkdf2Sync(`dsh-mcp-connectors|${mid}`, 'dsh-mcp-connectors-static-salt', 120000, 32, 'sha256');
+}
+
+function vaultLoad() {
+  try { return JSON.parse(readFileSync(VAULT_FILE(), 'utf8')); } catch { return { items: {} }; }
+}
+function vaultSave(v) { writeFileSync(VAULT_FILE(), JSON.stringify(v)); }
+
+function vaultEncrypt(key, plain) {
+  const iv = randomUUID().replace(/-/g, '').slice(0, 24); // 12 字节 hex
+  const cipher = createCipheriv('aes-256-gcm', key, Buffer.from(iv, 'hex'));
+  const data = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]).toString('base64');
+  return { iv, tag: cipher.getAuthTag().toString('base64'), data };
+}
+function vaultDecrypt(key, box) {
+  try {
+    const d = createDecipheriv('aes-256-gcm', key, Buffer.from(box.iv, 'hex'));
+    d.setAuthTag(Buffer.from(box.tag, 'base64'));
+    return Buffer.concat([d.update(Buffer.from(box.data, 'base64')), d.final()]).toString('utf8');
+  } catch { return ''; }
+}
+
+/* --- 统一入口 --- */
+function credSet(kind, serverName, value) {
+  const key = credKey(kind, serverName);
+  try {
+    const mode = credMode();
+    if (mode === 'keychain') {
+      execFileSync('security', ['add-generic-password', '-s', CRED_SERVICE, '-a', key, '-w', value, '-U'], { stdio: 'ignore' });
+    } else if (mode === 'credman') {
+      credmanRun(`[CredMan]::Write('${CRED_SERVICE}:${key}','${value.replace(/'/g, "''")}')`);
+    } else if (mode === 'secret') {
+      execFileSync('secret-tool', ['store', '--label=' + CRED_SERVICE, 'service', CRED_SERVICE, 'account', key, key], {
+        input: value, stdio: ['pipe', 'ignore', 'ignore'],
+      });
+    } else {
+      const v = vaultLoad();
+      v.items[key] = vaultEncrypt(vaultKey(), value);
+      vaultSave(v);
+    }
+    CRED_CACHE.set(key, value);
     return true;
   } catch (e) {
-    dbg(`钥匙串写入失败（${kind}:${serverName}）：${String(e?.message ?? e).split('\n')[0].slice(0, 120)}`);
+    dbg(`凭据写入失败（${key}@${CRED_MODE}）：${String(e?.message ?? e).split('\n')[0].slice(0, 120)}`);
     return false;
   }
 }
 
-function keychainGet(kind, serverName) {
+function credGet(kind, serverName) {
+  const key = credKey(kind, serverName);
+  if (CRED_CACHE.has(key)) return CRED_CACHE.get(key);
   try {
-    const out = execFileSync('security', ['find-generic-password', ...kcArgs(kind, serverName), '-w'], { encoding: 'utf8' });
-    return out.trim();
+    const mode = credMode();
+    let val = '';
+    if (mode === 'keychain') {
+      val = execFileSync('security', ['find-generic-password', '-s', CRED_SERVICE, '-a', key, '-w'], { encoding: 'utf8' }).trim();
+    } else if (mode === 'credman') {
+      val = credmanRun(`[CredMan]::Read('${CRED_SERVICE}:${key}')`);
+    } else if (mode === 'secret') {
+      val = execFileSync('secret-tool', ['lookup', 'service', CRED_SERVICE, 'account', key], { encoding: 'utf8' }).trim();
+    } else {
+      const box = vaultLoad().items?.[key];
+      val = box ? vaultDecrypt(vaultKey(), box) : '';
+    }
+    if (val) CRED_CACHE.set(key, val);
+    return val;
   } catch {
     return '';
   }
 }
 
-function keychainDelete(kind, serverName) {
-  try { execFileSync('security', ['delete-generic-password', ...kcArgs(kind, serverName)], { stdio: 'ignore' }); } catch { /* 不存在即无妨 */ }
+function credDelete(kind, serverName) {
+  const key = credKey(kind, serverName);
+  CRED_CACHE.delete(key);
+  try {
+    const mode = credMode();
+    if (mode === 'keychain') {
+      execFileSync('security', ['delete-generic-password', '-s', CRED_SERVICE, '-a', key], { stdio: 'ignore' });
+    } else if (mode === 'credman') {
+      execFileSync('cmdkey', [`/generic:${CRED_SERVICE}:${key}`, '/delete'], { stdio: 'ignore' });
+    } else if (mode === 'secret') {
+      execFileSync('secret-tool', ['clear', 'service', CRED_SERVICE, 'account', key], { stdio: 'ignore' });
+    } else {
+      const v = vaultLoad();
+      delete v.items?.[key];
+      vaultSave(v);
+    }
+  } catch { /* 不存在即无妨 */ }
 }
+
+/** 兼容别名（历史命名） */
+const keychainSet = credSet, keychainGet = credGet, keychainDelete = credDelete;
 
 /** 读取连接器凭据：优先钥匙串；兼容迁移前 json 中的明文（读到后立即搬入钥匙串并抹除）。 */
 function tokenOf(c) {
