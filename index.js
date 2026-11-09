@@ -83,7 +83,8 @@ function sanitizeConnector(input) {
     const targetSession = String(input.targetSession ?? '').trim();
     if (targetSession) c.targetSession = targetSession;
   } else {
-    if (!input.url || !/^https?:\/\//i.test(String(input.url))) throw new Error('URL 必须以 http(s):// 开头');
+    // 自定义连接器从宽：URL 只要求非空（不再强制 http(s):// 前缀），挂载/测试阶段再给出真实报错
+    if (!input.url || !String(input.url).trim()) throw new Error('HTTP 连接器需要填写服务地址（URL）');
     c.url = String(input.url).trim();
     let token = String(input.token ?? '').trim();
     // 用户可能把整条"安装指令"粘进来（链接 + 说明文字 + TENCENT_DOCS_TOKEN="xxx"）。
@@ -782,6 +783,30 @@ export async function apply(ctx, config = {}) {
   const reapplyGates = () => {
     for (const agent of AGENTS?.list?.() ?? []) applyGate(agent);
   };
+
+  /** 执行层强制校验（治本）：tools.guard 在每次工具调用前同步执行，
+   *  无论 root 会话还是 subagent、无论 restrict 是否已及时应用，都逃不过这里。
+   *  会话未启用对应连接器 → 直接拒绝调用。 */
+  ctx.effect(() => {
+    if (typeof ctx.tools?.guard !== 'function') {
+      warn('宿主 dsh-tools 不支持 tools.guard，仅有 restrict 门控（存在应用时序窗口）');
+      return;
+    }
+    return ctx.tools.guard((execution) => {
+    const m = /^mcp__([A-Za-z0-9_-]{1,32})__/.exec(String(execution?.name ?? ''));
+    if (!m) return undefined; // 非连接器工具，不管
+    const serverName = m[1];
+    if (!MOUNTED.has(serverName)) return undefined; // 不是本插件挂载的
+    const agent = execution?.agent;
+    const sessionId = String(agent?.session?.id ?? agent?.id ?? '');
+    const allowed = enabledServersOf(currentConfig(), sessionId);
+    if (!allowed.has(serverName)) {
+      dbg(`guard: deny ${execution.name} for session=${sessionId || '(no-agent)'} (${serverName} not enabled)`);
+      return `连接器 ${serverName} 在当前会话未启用：请在输入框左下角「连接器」下拉中勾选后重试`;
+    }
+    return undefined;
+    });
+  }, 'mcp-connectors: execution guard');
 
   /* ---------------- HTTP 路由 ---------------- */
 

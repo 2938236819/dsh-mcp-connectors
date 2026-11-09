@@ -1,9 +1,17 @@
 /**
  * @wfm-cn/dsh-mcp-connectors — MCP 连接器中心（Client 侧）
  *
- *  - sidebar.panellist 图标 + `main` 面板页（卡片流，hover 出现编辑/开关）；
- *  - conversation.input.left 会话内连接器选择下拉（向上弹出，按会话生效）；
- *  - 所有 Host 交互走 ctx.remote['mcp-connectors'].*。
+ *  ┌─ 结构说明（工程化：连接器注册表模式）──────────────────────────┐
+ *  │ 每个连接器 = CONNECTOR_DEFS 里一个完全自包含的定义对象：       │
+ *  │   id / icon / labelKey / descKey / template / renderAuth()      │
+ *  │ 新增连接器只需 append 一个定义，不改任何现有连接器与框架代码。  │
+ *  │ 框架（Tab 页 / 卡片 / 编辑器 / 保存）只读注册表，互不干扰。     │
+ *  └────────────────────────────────────────────────────────────────┘
+ *
+ *  - sidebar.panellist 图标 + `main` 面板页：
+ *      顶部两个 Tab：「全部」（目录卡片，点开查看+创建）、「已安装」（管理已创建的连接器）；
+ *  - conversation.input.left 会话内连接器选择下拉（按会话生效）；
+ *  - 所有 Host 交互走 HTTP API（fetch /mcp-connectors/*）。
  */
 window.__ModuleLoader__.load({
   id: '@wfm-cn/dsh-mcp-connectors',
@@ -19,8 +27,12 @@ window.__ModuleLoader__.load({
       zh: {
         panelTitle: '连接器',
         panelDesc: '统一管理 MCP 连接器：添加、授权凭据、启停，并在会话中选择启用。',
+        tabAll: '全部',
+        tabInstalled: '已安装',
         add: '添加连接器',
-        empty: '还没有连接器。点击「添加连接器」开始，例如腾讯文档官方 MCP。',
+        empty: '还没有连接器。切到「全部」标签页，选一个开始。',
+        emptyInstalled: '还没有已安装的连接器。到「全部」标签页点击卡片即可创建。',
+        goAllTab: '去「全部」看看 →',
         enabled: '已启用',
         disabled: '已停用',
         mounted: '已连接',
@@ -28,6 +40,9 @@ window.__ModuleLoader__.load({
         edit: '编辑',
         del: '删除',
         confirmDelete: '确定删除该连接器？',
+        installedBadge: '已安装',
+        viewAndCreate: '查看并创建',
+        connectorInfo: '连接器说明',
         fieldTitle: '名称',
         fieldType: '类型（固定）',
         fieldServerName: '标识（serverName）',
@@ -66,6 +81,17 @@ window.__ModuleLoader__.load({
         presetKdocs: '金山文档（WPS 云文档 MCP）',
         presetGithub: 'GitHub（官方 MCP · 需 Personal Access Token）',
         presetCustom: '自定义 / 其他 MCP 服务',
+        descTencentDocs: '腾讯文档官方 MCP：读写在线文档、智能表格，需在官网开通并获取 token。',
+        descKdocs: '金山文档（WPS 云文档）官方 MCP：通过 WPS 账号授权登录，无需手动粘贴 token。',
+        descGithub: 'GitHub 官方 MCP：操作仓库、Issue、PR，需要 Personal Access Token（fine-grained）。',
+        descWechat: '微信 ClawBot：扫码绑定个人微信后，可在指定会话里自动回复消息、收发文件。',
+        descChrome: 'Chrome DevTools MCP：本机运行的浏览器控制连接器，可打开页面、点击、截图、抓网络请求，无需令牌。',
+        descCustom: '任意 MCP 服务：粘贴 JSON 配置一键填充，或手动填写字段；不做过多的限制，想怎么填就怎么填。',
+        jsonPasteTitle: '粘贴 JSON 快速填充（可选）',
+        jsonPastePlaceholder: '支持 mcpServers 配置，例如：\n\n{\n  "my-server": {\n    "command": "npx",\n    "args": ["-y", "some-mcp-server"],\n    "env": { "API_KEY": "xxx" }\n  }\n}\n\n或 HTTP 型：\n\n{ "my-server": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer xxx" } } }',
+        jsonParseBtn: '解析并填充 ↓',
+        jsonParseOk: '✓ 已填充：',
+        jsonParseFail: '✕ 解析失败：',
         composerOpen: '连接器',
         selectAll: '全选',
         deselectAll: '全部取消',
@@ -76,8 +102,12 @@ window.__ModuleLoader__.load({
       en: {
         panelTitle: 'Connectors',
         panelDesc: 'Manage MCP connectors: add, authorize, toggle, and pick per conversation.',
+        tabAll: 'All',
+        tabInstalled: 'Installed',
         add: 'Add connector',
-        empty: 'No connectors yet. Click "Add connector" — e.g. Tencent Docs official MCP.',
+        empty: 'No connectors yet. Open the "All" tab and pick one.',
+        emptyInstalled: 'Nothing installed yet. Click a card in the "All" tab to create one.',
+        goAllTab: 'Browse the "All" tab →',
         enabled: 'Enabled',
         disabled: 'Disabled',
         mounted: 'Connected',
@@ -85,6 +115,9 @@ window.__ModuleLoader__.load({
         edit: 'Edit',
         del: 'Delete',
         confirmDelete: 'Delete this connector?',
+        installedBadge: 'Installed',
+        viewAndCreate: 'View & create',
+        connectorInfo: 'About this connector',
         fieldTitle: 'Title',
         fieldType: 'Type (fixed)',
         fieldServerName: 'Server name',
@@ -123,6 +156,17 @@ window.__ModuleLoader__.load({
         presetKdocs: 'Kingsoft Docs (WPS cloud MCP)',
         presetGithub: 'GitHub (official MCP · needs a Personal Access Token)',
         presetCustom: 'Custom MCP server',
+        descTencentDocs: 'Official Tencent Docs MCP: read/write online docs and smart sheets. Requires a token from the official site.',
+        descKdocs: 'Official Kingsoft Docs (WPS) MCP: authorize with your WPS account — no manual token.',
+        descGithub: 'Official GitHub MCP: repos, issues, PRs. Requires a fine-grained Personal Access Token.',
+        descWechat: 'WeChat ClawBot: bind your personal WeChat via QR, then auto-reply messages in a chosen session.',
+        descChrome: 'Chrome DevTools MCP: local browser-control connector — navigate, click, screenshot, inspect network. No token.',
+        descCustom: 'Any MCP server: paste a JSON config to auto-fill, or fill fields manually. Kept loose on purpose.',
+        jsonPasteTitle: 'Paste JSON to auto-fill (optional)',
+        jsonPastePlaceholder: 'mcpServers-style config, e.g.:\n\n{ "my-server": { "command": "npx", "args": ["-y", "some-mcp-server"], "env": { "API_KEY": "xxx" } } }\n\nor HTTP:\n\n{ "my-server": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer xxx" } } }',
+        jsonParseBtn: 'Parse & fill ↓',
+        jsonParseOk: '✓ Filled: ',
+        jsonParseFail: '✕ Parse failed: ',
         composerOpen: 'Connectors',
         selectAll: 'Select all',
         deselectAll: 'Deselect all',
@@ -132,7 +176,7 @@ window.__ModuleLoader__.load({
       },
     };
 
-    /* ---------------- 小部件 ---------------- */
+    /* ================= 通用小部件（与具体连接器无关） ================= */
 
     function Switch({ checked, onChange, title }) {
       return h('button', {
@@ -149,80 +193,7 @@ window.__ModuleLoader__.load({
 
     const inputCls = 'mcx-input';
 
-    /* ---------------- 卡片编辑器 ---------------- */
-
-    /** 预设清单：新增连接器时从下拉里选。加新预设只改这里。
-     *  helpUrl 是该服务的 token 获取页（各服务不同，绝不混用）。 */
-    const PRESETS = [
-      {
-        id: 'tencent-docs',
-        labelKey: 'presetTencentDocs',
-        template: {
-          title: '腾讯文档', serverName: 'tencent-docs', transport: 'streamable-http',
-          url: 'https://docs.qq.com/openapi/mcp',
-          helpUrl: 'https://docs.qq.com/scenario/open-claw.html',
-        },
-      },
-      {
-        id: 'kdocs',
-        labelKey: 'presetKdocs',
-        template: {
-          title: '金山文档', serverName: 'kdocs-wps', transport: 'streamable-http',
-          url: 'https://mcp-center.wps.cn/skill_hub/mcp',
-          auth: 'wps',
-        },
-      },
-      {
-        id: 'github',
-        labelKey: 'presetGithub',
-        template: {
-          title: 'GitHub', serverName: 'github', transport: 'streamable-http',
-          url: 'https://api.githubcopilot.com/mcp/',
-          helpUrl: 'https://github.com/settings/personal-access-tokens',
-        },
-      },
-      {
-        id: 'wechat',
-        labelKey: 'presetWechat',
-        template: {
-          title: '微信 (ClawBot)', serverName: 'weixin-mcp', transport: 'stdio',
-          command: 'npx', args: ['-y', 'weixin-mcp'],
-          auth: 'wxqr',
-        },
-      },
-      {
-        id: 'chrome',
-        labelKey: 'presetChrome',
-        template: {
-          title: '谷歌浏览器', serverName: 'chrome-devtools', transport: 'stdio',
-          command: 'npx', args: ['-y', 'chrome-devtools-mcp@latest'],
-        },
-      },
-      {
-        id: 'custom',
-        labelKey: 'presetCustom',
-        template: { title: '', serverName: '', transport: 'streamable-http', url: '' },
-      },
-    ];
-    /** 按端点 URL 匹配已知预设的 token 帮助页（编辑旧连接器也显示正确链接）。 */
-    const HELP_URL_BY_ENDPOINT = {
-      'https://docs.qq.com/openapi/mcp': 'https://docs.qq.com/scenario/open-claw.html',
-            'https://api.githubcopilot.com/mcp/': 'https://github.com/settings/personal-access-tokens',
-    };
-    /** 由 serverName/url 推断连接器类型（兼容存量数据）；返回 undefined 表示自定义。 */
-    function inferType(c) {
-      if (!c) return undefined;
-      if (c.type) return c.type;
-      const sn = String(c.serverName ?? '');
-      const url = String(c.url ?? '');
-      if (sn === 'chrome-devtools' || /chrome-devtools-mcp/.test(`${c.command ?? ''} ${(c.args ?? []).join(' ')}`)) return 'chrome';
-      if (c.auth === 'wxqr' || sn === 'weixin-mcp') return 'wechat';
-      if (c.auth === 'wps' || sn === 'kdocs-wps' || /mcp-center\.wps\.cn/.test(url)) return 'kdocs';
-      if (c.auth === 'pat' || sn === 'github' || /api\.githubcopilot\.com/.test(url)) return 'github';
-      if (sn === 'tencent-docs' || /docs\.qq\.com\/openapi\/mcp/.test(url)) return 'tencent-docs';
-      return undefined;
-    }
-    const PRESET_BY_ID = Object.fromEntries(PRESETS.map((p) => [p.id, p]));
+    /* ================= 微信相关组件（仅供 wechat 连接器使用） ================= */
 
     /** 微信自动回复的绑定会话选择器：可搜索，默认只显示前几条。 */
     function WechatSessionPicker({ t, api, value, onChange }) {
@@ -292,7 +263,8 @@ window.__ModuleLoader__.load({
     }
 
     /** 微信 ClawBot 扫码绑定：按钮 → 对话框内二维码 → 轮询状态 → 绑定完成。 */
-    function WechatQrAuth({ t, api, onSaved, onSave, busy, setBusy, msg, setMsg, isNew, initialServerName }) {      const [qr, setQr] = useState('');       // 二维码 PNG data URL
+    function WechatQrAuth({ t, api, onSaved, onSave, busy, setBusy, msg, setMsg, isNew, initialServerName }) {
+      const [qr, setQr] = useState('');       // 二维码 PNG data URL
       const [phase, setPhase] = useState('idle'); // idle | waiting | scaned | done | fail
       const runRef = useRef(0);
       const start = async () => {
@@ -308,9 +280,9 @@ window.__ModuleLoader__.load({
             const st = await api.wxAuthStatus({ serverName: initialServerName || 'weixin-mcp' });
             if (!st.ok) continue;
             const v = st.value ?? {};
-            if (v.status === 'refreshed' && v.image) { setQr(v.image); setPhase('waiting'); setMsg(''); }
+            if (v.status === 'refreshed' && v.image) { setQr(v.value?.image ?? v.image); setPhase('waiting'); setMsg(''); }
             else if (v.status === 'waiting' && v.image && !qr) setQr(v.image);
-            else if (v.status === 'scaned') { setPhase('scaned'); setMsg(t('wxScaned')); }
+            else if (v.status === 'scaned') { setPhase('scaned'); setMsg(t('wxConfirmOnPhone')); }
             else if (v.status === 'done') {
               setPhase('done'); setMsg('✓ ' + t('wxBindDone')); setBusy(false);
               try { await onSave?.(); } catch { /* 保存失败不掩盖绑定成功 */ }
@@ -338,11 +310,195 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /* ================================================================
+     * 连接器注册表（核心隔离机制）
+     *
+     * 每个连接器一个完全自包含的定义对象。新增连接器 = 在这里 append
+     * 一项，不动任何其他代码；某个连接器的 renderAuth 写坏了也只
+     * 影响它自己的表单区，框架与其它连接器不受影响。
+     *
+     * def 字段：
+     *   id         注册表内唯一 id（存量数据里的 type 值）
+     *   icon       目录卡片图标（emoji）
+     *   labelKey   名称文案 key（DICTS）
+     *   descKey    说明文案 key（DICTS）
+     *   template   新建时的默认 draft（serverName/transport/url/...）
+     *   renderAuth(ui) -> 节点 | null   该连接器特有的表单区
+     *     ui = { h, Field, inputCls, t, api, draft, set, setDraft,
+     *            initial, onSaved, doSave, busy, setBusy }
+     *   lockTemplate  预设是否锁定 serverName/transport 等技术字段
+     * ================================================================ */
+    const CONNECTOR_DEFS = [
+      {
+        id: 'tencent-docs',
+        icon: '📄',
+        labelKey: 'presetTencentDocs',
+        descKey: 'descTencentDocs',
+        lockTemplate: true,
+        template: {
+          title: '腾讯文档', serverName: 'tencent-docs', transport: 'streamable-http',
+          url: 'https://docs.qq.com/openapi/mcp',
+          helpUrl: 'https://docs.qq.com/scenario/open-claw.html',
+        },
+        renderAuth: ({ h: H, Field: F, inputCls: ic, t, draft, set, initial }) => H(React.Fragment, null,
+          H(F, { label: t('fieldToken') },
+            H('input', { className: ic, type: 'password', value: draft.token === '●' ? '' : draft.token ?? '', onChange: set('token'), placeholder: initial?.token === '●' ? '已保存 · 留空保持不变' : '粘贴 token 或整条安装指令均可' })),
+          H('a', {
+            className: 'mcx-token-link',
+            href: 'https://docs.qq.com/scenario/open-claw.html',
+            target: '_blank', rel: 'noreferrer',
+          }, t('getTokenHint'))),
+      },
+      {
+        id: 'kdocs',
+        icon: '📊',
+        labelKey: 'presetKdocs',
+        descKey: 'descKdocs',
+        lockTemplate: true,
+        template: {
+          title: '金山文档', serverName: 'kdocs-wps', transport: 'streamable-http',
+          url: 'https://mcp-center.wps.cn/skill_hub/mcp',
+          auth: 'wps',
+        },
+        renderAuth: ({ h: H, t, api, draft, initial, onSaved, setAuthMsg }) => H('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+          H('button', {
+            type: 'button', className: 'mcx-btn mcx-auth-btn',
+            onClick: async () => {
+              const sn = draft.serverName || initial?.serverName;
+              if (!sn) { setAuthMsg('✕ ' + t('authNeedName')); return; }
+              setAuthMsg(t('authOpening'));
+              try {
+                const r = await api.authStart({ serverName: sn });
+                if (!r.ok) { setAuthMsg('✕ ' + (r.error?.message ?? 'failed')); return; }
+                window.open(r.value.loginUrl, '_blank', 'noopener');
+                for (let i = 0; i < 150; i++) {
+                  await new Promise((res2) => setTimeout(res2, 2000));
+                  const st = await api.authStatus({ serverName: sn });
+                  if (st.ok && st.value.status === 'done') { setAuthMsg('✓ ' + t('authDone')); await onSaved?.(); break; }
+                  if (st.ok && (st.value.status === 'error' || st.value.status === 'timeout')) { setAuthMsg('✕ ' + (st.value.error ?? st.value.status)); break; }
+                }
+              } catch (e2) { setAuthMsg('✕ ' + String(e2?.message ?? e2)); }
+            },
+          }, t('authWps')),
+          H('div', { className: 'mcx-auth-hint' }, t('authHint'))),
+      },
+      {
+        id: 'github',
+        icon: '🐙',
+        labelKey: 'presetGithub',
+        descKey: 'descGithub',
+        lockTemplate: true,
+        template: {
+          title: 'GitHub', serverName: 'github', transport: 'streamable-http',
+          url: 'https://api.githubcopilot.com/mcp/',
+          helpUrl: 'https://github.com/settings/personal-access-tokens',
+        },
+        renderAuth: ({ h: H, Field: F, inputCls: ic, t, draft, set, initial }) => H(React.Fragment, null,
+          H(F, { label: t('fieldToken') },
+            H('input', { className: ic, type: 'password', value: draft.token === '●' ? '' : draft.token ?? '', onChange: set('token'), placeholder: initial?.token === '●' ? '已保存 · 留空保持不变' : 'github_pat_…' })),
+          H('a', {
+            className: 'mcx-btn mcx-auth-btn mcx-token-link',
+            href: 'https://github.com/settings/personal-access-tokens',
+            target: '_blank', rel: 'noreferrer',
+          }, t('githubCreateBtn')),
+          H('div', { className: 'mcx-auth-hint' }, t('githubHint'))),
+      },
+      {
+        id: 'wechat',
+        icon: '💬',
+        labelKey: 'presetWechat',
+        descKey: 'descWechat',
+        lockTemplate: true,
+        template: {
+          title: '微信 (ClawBot)', serverName: 'weixin-mcp', transport: 'stdio',
+          command: 'npx', args: ['-y', 'weixin-mcp'],
+          auth: 'wxqr',
+        },
+        renderAuth: ({ h: H, t, api, draft, setDraft, initial, onSaved, doSave, busy, setBusy, setAuthMsg }) => H(React.Fragment, null,
+          H(WechatSessionPicker, { t, api, value: draft.targetSession ?? '', onChange: (v) => setDraft((d) => ({ ...d, targetSession: v })) }),
+          H(WechatQrAuth, {
+            t, api, onSaved, onSave: () => doSave(false), busy, setBusy,
+            msg: authMsg, setMsg: setAuthMsg, isNew: !initial?.id, initialServerName: initial?.serverName,
+          })),
+      },
+      {
+        id: 'chrome',
+        icon: '🌐',
+        labelKey: 'presetChrome',
+        descKey: 'descChrome',
+        lockTemplate: true,
+        template: {
+          title: '谷歌浏览器', serverName: 'chrome-devtools', transport: 'stdio',
+          command: 'npx', args: ['-y', 'chrome-devtools-mcp@latest'],
+        },
+        renderAuth: ({ h: H, t }) =>
+          H('div', { className: 'mcx-auth-hint' }, t('chromeHint')),
+      },
+      {
+        id: 'custom',
+        icon: '⚙️',
+        labelKey: 'presetCustom',
+        descKey: 'descCustom',
+        lockTemplate: false, // 自定义：一切放开
+        template: { title: '', serverName: '', transport: 'streamable-http', url: '' },
+        renderAuth: null, // 自定义的字段由编辑器统一渲染（JSON 粘贴 + 全字段）
+      },
+    ];
+    const DEF_BY_ID = Object.fromEntries(CONNECTOR_DEFS.map((d) => [d.id, d]));
+
+    /** 按端点 URL 匹配已知预设的 token 帮助页（编辑旧连接器也显示正确链接）。 */
+    const HELP_URL_BY_ENDPOINT = {
+      'https://docs.qq.com/openapi/mcp': 'https://docs.qq.com/scenario/open-claw.html',
+      'https://api.githubcopilot.com/mcp/': 'https://github.com/settings/personal-access-tokens',
+    };
+    /** 由 serverName/url 推断连接器类型（兼容存量数据）；返回 undefined 表示自定义。 */
+    function inferType(c) {
+      if (!c) return undefined;
+      if (c.type && DEF_BY_ID[c.type]) return c.type;
+      const sn = String(c.serverName ?? '');
+      const url = String(c.url ?? '');
+      if (sn === 'chrome-devtools' || /chrome-devtools-mcp/.test(`${c.command ?? ''} ${(c.args ?? []).join(' ')}`)) return 'chrome';
+      if (c.auth === 'wxqr' || sn === 'weixin-mcp') return 'wechat';
+      if (c.auth === 'wps' || sn === 'kdocs-wps' || /mcp-center\.wps\.cn/.test(url)) return 'kdocs';
+      if (c.auth === 'pat' || sn === 'github' || /api\.githubcopilot\.com/.test(url)) return 'github';
+      if (sn === 'tencent-docs' || /docs\.qq\.com\/openapi\/mcp/.test(url)) return 'tencent-docs';
+      return undefined;
+    }
+
+    /* ================= JSON 粘贴解析（仅自定义连接器使用） ================= */
+
+    /**
+     * 宽松解析用户粘贴的 JSON，提取一个 MCP server 配置：
+     *  - { mcpServers: { name: {...} } }（标准 Claude/DSH 配置）
+     *  - { name: {...} }（单键，值形如 server 配置）
+     *  - 直接一个 server 配置对象（含 command 或 url）
+     * 返回 { name, server }；不认识则抛错。
+     */
+    function parseMcpJson(text) {
+      const raw = String(text ?? '').trim();
+      if (!raw) throw new Error('empty');
+      let obj;
+      try { obj = JSON.parse(raw); } catch (e) { throw new Error('不是合法 JSON：' + (e?.message ?? e)); }
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new Error('JSON 根必须是对象');
+      let root = obj;
+      if (root.mcpServers && typeof root.mcpServers === 'object') root = root.mcpServers;
+      const looksLikeServer = (v) => v && typeof v === 'object'
+        && (typeof v.url === 'string' || typeof v.command === 'string');
+      if (looksLikeServer(root)) return { name: '', server: root };
+      const entries = Object.entries(root).filter(([, v]) => looksLikeServer(v));
+      if (entries.length === 0) throw new Error('没有找到形如 { "名称": { url|command: ... } } 的 server 配置');
+      const [name, server] = entries[0];
+      return { name, server };
+    }
+
+    /* ================= 连接器编辑器（由 def 驱动的通用表单） ================= */
+
     function ConnectorEditor({ initial, t, api, onSave, onDelete, onTest, onSaved, onClose }) {
       const [draft, setDraft] = useState(() => ({
         title: '', serverName: '', transport: 'streamable-http', url: '', token: '',
         command: '', argsText: '', envText: '', note: '', enabled: true,
         ...(initial && initial.env ? { envText: Object.entries(initial.env).map(([k, v]) => `${k}=${v}`).join('\n') } : {}),
+        ...(initial && initial.args ? { argsText: initial.args.join('\n') } : {}),
         ...(initial ?? {}),
       }));
       const [busy, setBusy] = useState(false);
@@ -351,12 +507,15 @@ window.__ModuleLoader__.load({
       const [testResult, setTestResult] = useState('');
       const [authBusy, setAuthBusy] = useState(false);
       const [authMsg, setAuthMsg] = useState('');
+      const [jsonText, setJsonText] = useState('');
+      const [jsonMsg, setJsonMsg] = useState('');
       const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
       const isNew = !initial?.id;
-      // 类型：预设固定不可改；自定义没有类型字段
-      const ctype = inferType({ ...draft, ...initial }); // '' / undefined => custom
-      const isPreset = Boolean(ctype && PRESET_BY_ID[ctype]);
-      const presetDef = isPreset ? PRESET_BY_ID[ctype] : null;
+
+      // 类型：预设 id / undefined（自定义）
+      const ctype = inferType({ ...draft, ...initial });
+      const def = ctype ? DEF_BY_ID[ctype] ?? DEF_BY_ID.custom : DEF_BY_ID.custom;
+      const isPreset = Boolean(ctype && def.id !== 'custom');
       const isCustom = !isPreset;
 
       const doSave = async (closeAfter = true) => {
@@ -365,13 +524,13 @@ window.__ModuleLoader__.load({
           const connector = {
             ...draft,
             id: initial?.id,
-            type: isPreset ? ctype : undefined,
+            type: isPreset ? def.id : undefined,
             title: draft.title, serverName: draft.serverName, transport: draft.transport,
             note: draft.note, enabled: draft.enabled !== false,
           };
-          if (isPreset) {
-            // 类型固定：地址/标识/transport 一律以预设为准，用户只能改名称、token、备注
-            const tpl = presetDef.template;
+          if (isPreset && def.lockTemplate) {
+            // 预设类型：技术字段以模板为准，用户可改名称、token、备注
+            const tpl = def.template;
             connector.serverName = tpl.serverName;
             connector.transport = tpl.transport;
             if (tpl.url) connector.url = tpl.url;
@@ -379,10 +538,11 @@ window.__ModuleLoader__.load({
             if (tpl.command) connector.command = tpl.command;
             if (tpl.args) connector.args = tpl.args;
           }
-          if (draft.transport === 'stdio') {
-            connector.command = draft.command || presetDef?.template?.command;
-            connector.args = presetDef?.template?.args
-              ?? String(draft.argsText ?? '').split('\n').map((x) => x.trim()).filter(Boolean);
+          if (connector.transport === 'stdio') {
+            // stdio：优先保留预设 args；自定义则用文本框逐行解析
+            connector.command = draft.command || def.template?.command || '';
+            if (isPreset && def.template?.args) connector.args = def.template.args;
+            else connector.args = String(draft.argsText ?? '').split('\n').map((x) => x.trim()).filter(Boolean);
             connector.env = Object.fromEntries(
               String(draft.envText ?? '').split('\n').map((l) => l.trim())
                 .filter((l) => l && l.includes('='))
@@ -390,6 +550,7 @@ window.__ModuleLoader__.load({
             delete connector.url; delete connector.token;
           } else {
             connector.url = draft.url; connector.token = draft.token;
+            if (draft.headers) connector.headers = draft.headers;
             delete connector.command; delete connector.args;
           }
           if (initial?.token === '●' && !connector.token) connector.token = '●'; // 未改动时保留
@@ -403,87 +564,92 @@ window.__ModuleLoader__.load({
       };
       const submit = (e) => { e.preventDefault(); doSave(); };
 
-      return h('form', { className: 'mcx-editor', onSubmit: submit },
+      /** 自定义：JSON 粘贴 → 宽松填充 draft */
+      const applyJson = () => {
+        setJsonMsg('');
+        try {
+          const { name, server } = parseMcpJson(jsonText);
+          const next = { ...draft };
+          if (name) { next.serverName = next.serverName || String(name).replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 32) || next.serverName; next.title = next.title || String(name); }
+          if (typeof server.url === 'string') { next.transport = 'streamable-http'; next.url = server.url; }
+          if (typeof server.command === 'string') {
+            next.transport = 'stdio'; next.command = server.command;
+            if (Array.isArray(server.args)) next.argsText = server.args.map(String).join('\n');
+          }
+          if (server.env && typeof server.env === 'object') {
+            next.envText = Object.entries(server.env).map(([k, v]) => `${k}=${v}`).join('\n');
+          }
+          if (server.headers && typeof server.headers === 'object') {
+            // Authorization / 任意头里的 Bearer token 提取到 token 字段（宽松，不强制）
+            const auth = server.headers.Authorization ?? server.headers.authorization;
+            if (typeof auth === 'string' && /^Bearer\s+/i.test(auth) && !next.token) {
+              next.token = auth.replace(/^Bearer\s+/i, '');
+            }
+            next.headers = Object.fromEntries(Object.entries(server.headers).map(([k, v]) => [String(k), String(v).replace(/^Bearer\s+/i, (m) => m)]));
+          }
+          if (typeof server.token === 'string') next.token = server.token;
+          setDraft(next);
+          setJsonMsg('✓ ' + (name || 'server'));
+        } catch (e) {
+          setJsonMsg('✕ ' + String(e?.message ?? e));
+        }
+      };
+
+      const authUi = def.renderAuth
+        ? def.renderAuth({
+            h, Field, inputCls, t, api, draft, set, setDraft, initial,
+            onSaved, doSave, busy: authBusy, setBusy: setAuthBusy, setAuthMsg,
+          })
+        : null;
+
+      return h('form', { className: 'mcx-editor mcx-editor-wide', onSubmit: submit },
         h('div', { className: 'mcx-editor-head' },
-          h('span', null, isNew ? t('add') : t('edit')),
+          h('span', null, h('span', { className: 'mcx-editor-icon' }, def.icon), ' ', isNew ? t(def.labelKey) : t('edit') + ' · ' + (draft.title || initial?.title || t(def.labelKey))),
           h('button', { type: 'button', className: 'mcx-iconbtn', onClick: onClose, 'aria-label': 'close' }, '✕')),
-        h(Field, { label: t('fieldTitle') }, h('input', { className: inputCls, value: draft.title ?? '', onChange: set('title'), placeholder: isPreset ? presetDef.template.title : 'Tencent Docs' })),
-        isPreset ? h(Field, { label: t('fieldType') }, h('input', { className: inputCls, value: t(presetDef.labelKey), disabled: true, readOnly: true })) : null,
+        // 连接器说明（“全部”目录点进来先看到这是什么）
+        h('div', { className: 'mcx-def-desc' }, t(def.descKey)),
+        isPreset ? h(Field, { label: t('fieldType') }, h('input', { className: inputCls, value: t(def.labelKey), disabled: true, readOnly: true })) : null,
+        h(Field, { label: t('fieldTitle') }, h('input', { className: inputCls, value: draft.title ?? '', onChange: set('title'), placeholder: def.template.title || 'My Connector' })),
         h(Field, { label: t('fieldServerName') },
           isPreset
-            ? h('input', { className: inputCls, value: presetDef.template.serverName, disabled: true, readOnly: true })
-            : h('input', { className: inputCls, value: draft.serverName ?? '', onChange: set('serverName'), placeholder: 'tencent-docs', pattern: '[A-Za-z0-9_-]{1,32}', required: true })),
+            ? h('input', { className: inputCls, value: def.template.serverName, disabled: true, readOnly: true })
+            : h('input', { className: inputCls, value: draft.serverName ?? '', onChange: set('serverName'), placeholder: 'my-server（决定工具前缀 mcp__<标识>__*）' })),
         isCustom ? h(Field, { label: t('fieldTransport') },
           h('select', { className: inputCls, value: draft.transport, onChange: set('transport') },
             h('option', { value: 'streamable-http' }, 'streamable-http'),
-            h('option', { value: 'stdio' }, 'stdio'))) : null,
+            h('option', { value: 'stdio' }, 'stdio'),
+            h('option', { value: 'wecom' }, 'wecom（企业微信）'))) : null,
         isCustom && draft.transport === 'stdio'
           ? h(React.Fragment, null,
-              h(Field, { label: t('fieldCommand') }, h('input', { className: inputCls, value: draft.command ?? '', onChange: set('command'), placeholder: 'npx', required: true })),
+              h(Field, { label: t('fieldCommand') }, h('input', { className: inputCls, value: draft.command ?? '', onChange: set('command'), placeholder: 'npx' })),
               h(Field, { label: t('fieldArgs') }, h('textarea', { className: inputCls, rows: 2, value: draft.argsText ?? '', onChange: set('argsText'), placeholder: '-y\n@modelcontextprotocol/server-xxx' })),
               h(Field, { label: t('fieldEnv') }, h('textarea', { className: inputCls, rows: 2, value: draft.envText ?? '', onChange: set('envText'), placeholder: 'API_KEY=xxx' })))
-          : isCustom
+          : isCustom && draft.transport === 'streamable-http'
           ? h(React.Fragment, null,
-              h(Field, { label: t('fieldUrl') }, h('input', { className: inputCls, value: draft.url ?? '', onChange: set('url'), placeholder: 'https://docs.qq.com/openapi/mcp', required: true })),
+              h(Field, { label: t('fieldUrl') }, h('input', { className: inputCls, value: draft.url ?? '', onChange: set('url'), placeholder: 'https://example.com/mcp（宽松：不强校验格式）' })),
               h('div', null,
-                h(Field, { label: t('fieldToken') }, h('input', { className: inputCls, type: 'password', value: draft.token === '●' ? '' : draft.token ?? '', onChange: set('token'), placeholder: initial?.token === '●' ? '已保存 · 留空保持不变' : '粘贴 token 或整条安装指令均可' })),
+                h(Field, { label: t('fieldToken') }, h('input', { className: inputCls, type: 'password', value: draft.token === '●' ? '' : draft.token ?? '', onChange: set('token'), placeholder: initial?.token === '●' ? '已保存 · 留空保持不变' : 'token 或整条安装指令均可，可留空' })),
                 h('a', {
                   className: 'mcx-token-link',
-                  href: draft.helpUrl || HELP_URL_BY_ENDPOINT[draft.url] || 'https://docs.qq.com/scenario/open-claw.html',
+                  href: draft.helpUrl || HELP_URL_BY_ENDPOINT[draft.url] || 'https://modelcontextprotocol.io',
                   target: '_blank', rel: 'noreferrer',
                 }, t('getTokenHint'))))
-          : h(React.Fragment, null,
-              // 预设类型：只显示该类型自己的字段
-              ctype === 'chrome'
-                ? h('div', { className: 'mcx-auth-hint' }, t('chromeHint'))
-                : null,
-              ctype === 'github'
-                ? h(React.Fragment, null,
-                    h(Field, { label: t('fieldToken') }, h('input', { className: inputCls, type: 'password', value: draft.token === '●' ? '' : draft.token ?? '', onChange: set('token'), placeholder: initial?.token === '●' ? '已保存 · 留空保持不变' : 'github_pat_…' })),
-                    h('a', {
-                      className: 'mcx-btn mcx-auth-btn mcx-token-link',
-                      href: 'https://github.com/settings/personal-access-tokens',
-                      target: '_blank', rel: 'noreferrer',
-                    }, t('githubCreateBtn')))
-                : null,
-              ctype === 'wechat'
-                ? h(React.Fragment, null,                    h(WechatSessionPicker, { t, api, value: draft.targetSession ?? '', onChange: (v) => setDraft((d) => ({ ...d, targetSession: v })) }),
-                    h(WechatQrAuth, { t, api, onSaved, onSave: () => doSave(false), busy: authBusy, setBusy: setAuthBusy, msg: authMsg, setMsg: setAuthMsg, isNew, initialServerName: initial?.serverName }))
-                : null,
-              ctype === 'kdocs'
-                ? h(React.Fragment, null,
-                    h('button', {
-                      type: 'button', className: 'mcx-btn mcx-auth-btn', disabled: authBusy,
-                      onClick: async () => {
-                        const sn = draft.serverName || initial?.serverName;
-                        if (!sn) { setAuthMsg('✕ ' + t('authNeedName')); return; }
-                        setAuthBusy(true); setAuthMsg(t('authOpening'));
-                        try {
-                          const r = await api.authStart({ serverName: sn });
-                          if (!r.ok) { setAuthMsg('✕ ' + (r.error?.message ?? 'failed')); return; }
-                          window.open(r.value.loginUrl, '_blank', 'noopener');
-                          for (let i = 0; i < 150; i++) {
-                            await new Promise((res2) => setTimeout(res2, 2000));
-                            const st = await api.authStatus({ serverName: sn });
-                            if (st.ok && st.value.status === 'done') { setAuthMsg('✓ ' + t('authDone')); await onSaved?.(); break; }
-                            if (st.ok && (st.value.status === 'error' || st.value.status === 'timeout')) { setAuthMsg('✕ ' + (st.value.error ?? st.value.status)); break; }
-                          }
-                        } catch (e2) { setAuthMsg('✕ ' + String(e2?.message ?? e2)); }
-                        finally { setAuthBusy(false); }
-                      },
-                    }, authBusy ? t('authWaiting') : t('authWps')),
-                    h('div', { className: 'mcx-auth-hint' }, t('authHint')))
-                : null,
-              ctype === 'tencent-docs'
-                ? h(React.Fragment, null,
-                    h(Field, { label: t('fieldToken') }, h('input', { className: inputCls, type: 'password', value: draft.token === '●' ? '' : draft.token ?? '', onChange: set('token'), placeholder: initial?.token === '●' ? '已保存 · 留空保持不变' : '粘贴 token 或整条安装指令均可' })),
-                    h('a', {
-                      className: 'mcx-token-link',
-                      href: 'https://docs.qq.com/scenario/open-claw.html',
-                      target: '_blank', rel: 'noreferrer',
-                    }, t('getTokenHint')))
-                : null),
+          : null,
+        isCustom && draft.transport === 'wecom'
+          ? h(React.Fragment, null,
+              h(Field, { label: 'CorpID' }, h('input', { className: inputCls, value: draft.corpid ?? '', onChange: set('corpid'), placeholder: '企业 ID（ww…）' })),
+              h(Field, { label: '应用 Secret' }, h('input', { className: inputCls, type: 'password', value: draft.secret === '●' ? '' : draft.secret ?? '', onChange: set('secret'), placeholder: initial?.secret === '●' ? '已保存 · 留空保持不变' : '' })),
+              h(Field, { label: 'AgentId（可选）' }, h('input', { className: inputCls, value: draft.agentid ?? '', onChange: set('agentid'), placeholder: '应用数字 ID' })))
+          : null,
+        // 预设连接器：渲染它自己定义的表单区（token / 授权按钮 / 提示等）
+        isPreset ? authUi : null,
         h(Field, { label: t('fieldNote') }, h('textarea', { className: inputCls, rows: 2, value: draft.note ?? '', onChange: set('note') })),
+        isCustom && isNew ? h('div', { className: 'mcx-json-paste' },
+          h('div', { className: 'mcx-field-label' }, '📋 ', t('jsonPasteTitle')),
+          h('textarea', { className: inputCls, rows: 5, value: jsonText, onChange: (e) => setJsonText(e.target.value), placeholder: t('jsonPastePlaceholder') }),
+          h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' } },
+            h('button', { type: 'button', className: 'mcx-btn', onClick: applyJson }, t('jsonParseBtn')),
+            jsonMsg && h('span', { className: 'mcx-test-result ' + (jsonMsg.startsWith('✓') ? 'mcx-test-ok' : 'mcx-test-fail'), style: { padding: '2px 8px' } }, jsonMsg))) : null,
         err && h('div', { className: 'mcx-error' }, err),
         h('div', { className: 'mcx-editor-actions' },
           h('button', {
@@ -498,7 +664,7 @@ window.__ModuleLoader__.load({
             },
           }, testing ? t('testing') + '…' : t('testConn'))),
         testResult && h('div', { className: 'mcx-test-result' + (testResult.startsWith('✓') ? ' mcx-test-ok' : ' mcx-test-fail') }, testResult),
-        authMsg && h('div', { className: 'mcx-test-result ' + (authMsg.startsWith('✓') ? ' mcx-test-ok' : ' mcx-auth-msg') }, authMsg),
+        authMsg && h('div', { className: 'mcx-test-result ' + (authMsg.startsWith('✓') ? 'mcx-test-ok' : 'mcx-auth-msg') }, authMsg),
         h('div', { className: 'mcx-editor-actions' },
           h('button', { type: 'submit', className: 'mcx-btn mcx-btn-primary', disabled: busy }, t('save')),
           h('button', { type: 'button', className: 'mcx-btn', onClick: onClose }, t('cancel')),
@@ -509,14 +675,13 @@ window.__ModuleLoader__.load({
         h('p', { className: 'mcx-hint' }, t('hint')));
     }
 
-    /* ---------------- 面板页 ---------------- */
+    /* ================= 面板页：顶部 Tab（全部 / 已安装） ================= */
 
     function ConnectorsPage({ api, t }) {
       const [data, setData] = useState(null);
       const [err, setErr] = useState('');
-      const [editing, setEditing] = useState(null); // null | {} (new) | connector
-      const [addOpen, setAddOpen] = useState(false);
-      const addRef = useRef(null);
+      const [tab, setTab] = useState('all'); // 'all' | 'installed'
+      const [editing, setEditing] = useState(null); // null | {} (新建) | connector
 
       const refresh = useCallback(async () => {
         if (!api) { setErr('Host 服务未就绪（mcpConnectors）'); return; }
@@ -524,43 +689,54 @@ window.__ModuleLoader__.load({
         catch (e) { setErr(String(e?.message ?? e)); }
       }, [api]);
       useEffect(() => { refresh(); }, [refresh]);
-      useEffect(() => {
-        if (!addOpen) return undefined;
-        const off = (e) => { if (!addRef.current?.contains(e.target)) setAddOpen(false); };
-        window.addEventListener('mousedown', off);
-        return () => window.removeEventListener('mousedown', off);
-      }, [addOpen]);
 
       const save = async (connector) => { const r = await api.save({ connector }); if (!r.ok) throw new Error(r.error?.message ?? 'save failed'); await refresh(); };
       const remove = async (id) => { const r = await api.remove({ id }); if (!r.ok) throw new Error(r.error?.message ?? 'remove failed'); await refresh(); };
       const toggle = async (c, enabled) => { const r = await api.setEnabled({ id: c.id, enabled }); if (!r.ok) throw new Error(r.error?.message ?? 'toggle failed'); await refresh(); };
+
+      const installed = data?.connectors ?? [];
+      /** 目录 = 全部连接器定义；已安装的显示角标 */
+      const installedType = (defId) => installed.filter((c) => inferType(c) === defId).length;
 
       return h('div', { className: 'mcx-page' },
         h(Style, null),
         h('div', { className: 'mcx-page-head' },
           h('div', null,
             h('h2', { className: 'mcx-page-title' }, t('panelTitle')),
-            h('p', { className: 'mcx-page-desc' }, t('panelDesc'))),
-          h('div', { className: 'mcx-add-wrap', ref: addRef },
-            h('button', {
-              type: 'button', className: 'mcx-btn mcx-btn-primary',
-              onClick: () => setAddOpen((o) => !o), 'aria-haspopup': 'menu', 'aria-expanded': String(addOpen),
-            }, '+ ', t('add'), ' ▾'),
-            addOpen && h('div', { className: 'mcx-add-menu', role: 'menu' },
-              h('div', { className: 'mcx-add-menu-title' }, t('addMenuTitle')),
-              PRESETS.map((p) => h('button', {
-                key: p.id, type: 'button', role: 'menuitem', className: 'mcx-add-menu-item',
-                onClick: () => { setAddOpen(false); setEditing({ type: p.id === 'custom' ? undefined : p.id, ...(p.template ?? {}) }); },
-              }, t(p.labelKey)))))),
+            h('p', { className: 'mcx-page-desc' }, t('panelDesc')))),
+        h('div', { className: 'mcx-tabs', role: 'tablist' },
+          h('button', {
+            type: 'button', role: 'tab', 'aria-selected': String(tab === 'all'),
+            className: 'mcx-tab' + (tab === 'all' ? ' mcx-tab-active' : ''),
+            onClick: () => setTab('all'),
+          }, t('tabAll')),
+          h('button', {
+            type: 'button', role: 'tab', 'aria-selected': String(tab === 'installed'),
+            className: 'mcx-tab' + (tab === 'installed' ? ' mcx-tab-active' : ''),
+            onClick: () => setTab('installed'),
+          }, t('tabInstalled'), h('span', { className: 'mcx-tab-count' }, String(installed.length)))),
         err && h('div', { className: 'mcx-error' }, err, ' ', h('button', { className: 'mcx-btn', onClick: refresh }, t('retry'))),
         !data && !err && h('div', { className: 'mcx-empty' }, '…'),
-        data && data.connectors.length === 0 && h('div', { className: 'mcx-empty' }, t('empty')),
-        data && data.connectors.length > 0 && h('div', { className: 'mcx-grid' },
-          data.connectors.map((c) => h(Card, {
-            key: c.id, c, mounted: (data.mounted ?? []).includes(c.serverName), t,
-            onToggle: (en) => toggle(c, en).catch((e) => setErr(String(e?.message ?? e))),
-            onEdit: () => setEditing(c),
+
+        /* ---- Tab 1：全部（目录卡片，点开查看 + 创建） ---- */
+        data && tab === 'all' && h('div', { className: 'mcx-grid' },
+          CONNECTOR_DEFS.map((def) => h(CatalogCard, {
+            key: def.id, def, t, installedCount: installedType(def.id),
+            onOpen: () => setEditing({ type: def.id === 'custom' ? undefined : def.id, ...(def.template ?? {}) }),
           }))),
+
+        /* ---- Tab 2：已安装（管理已创建的连接器） ---- */
+        data && tab === 'installed' && (
+          installed.length === 0
+            ? h('div', { className: 'mcx-empty' }, t('emptyInstalled'), ' ',
+                h('button', { type: 'button', className: 'mcx-btn', style: { marginLeft: '8px' }, onClick: () => setTab('all') }, t('goAllTab')))
+            : h('div', { className: 'mcx-grid' },
+                installed.map((c) => h(Card, {
+                  key: c.id, c, mounted: (data.mounted ?? []).includes(c.serverName), t,
+                  onToggle: (en) => toggle(c, en).catch((e) => setErr(String(e?.message ?? e))),
+                  onEdit: () => setEditing(c),
+                })))),
+
         editing && h('div', { className: 'mcx-modal-mask', onClick: (e) => { if (e.target === e.currentTarget) setEditing(null); } },
           h(ConnectorEditor, {
             initial: editing, t, api, onSave: save, onClose: () => setEditing(null),
@@ -575,15 +751,29 @@ window.__ModuleLoader__.load({
           })));
     }
 
+    /** 「全部」目录卡片：图标 + 名称 + 说明 + 已安装角标；点击打开编辑器（查看 + 创建）。 */
+    function CatalogCard({ def, t, installedCount, onOpen }) {
+      return h('button', { type: 'button', className: 'mcx-card mcx-catalog-card', onClick: onOpen },
+        h('div', { className: 'mcx-catalog-head' },
+          h('span', { className: 'mcx-catalog-icon' }, def.icon),
+          h('span', { className: 'mcx-card-title' }, t(def.labelKey)),
+          installedCount > 0 ? h('span', { className: 'mcx-installed-badge' }, `✓ ${t('installedBadge')} ×${installedCount}`) : null),
+        h('div', { className: 'mcx-catalog-desc' }, t(def.descKey)),
+        h('div', { className: 'mcx-card-status' },
+          h('span', { className: 'mcx-catalog-cta' }, t('viewAndCreate') + ' →')));
+    }
+
+    /** 「已安装」tab 的连接器卡片。 */
     function Card({ c, mounted, t, onToggle, onEdit }) {
       const on = c.enabled !== false;
       const ctype = inferType(c);
-      const typeLabel = ctype && PRESET_BY_ID[ctype] ? t(PRESET_BY_ID[ctype].labelKey) : null;
+      const def = ctype ? DEF_BY_ID[ctype] : undefined;
+      const typeLabel = def && def.id !== 'custom' ? t(def.labelKey) : null;
       return h('div', { className: 'mcx-card' + (on ? '' : ' mcx-card-off') },
         h('div', { className: 'mcx-card-corner' },
           h('button', { type: 'button', className: 'mcx-iconbtn', title: t('edit'), onClick: onEdit, 'aria-label': t('edit') }, '✎'),
           h(Switch, { checked: on, onChange: onToggle, title: on ? t('enabled') : t('disabled') })),
-        h('div', { className: 'mcx-card-title' }, c.title || c.serverName),
+        h('div', { className: 'mcx-card-title' }, (def ? def.icon + ' ' : ''), c.title || c.serverName),
         h('div', { className: 'mcx-card-sub' }, (typeLabel ? typeLabel + ' · ' : '') + `mcp__${c.serverName}__*`),
         h('div', { className: 'mcx-card-url' }, c.transport === 'stdio' ? `${c.command} ${(c.args ?? []).join(' ')}` : c.url),
         c.note ? h('div', { className: 'mcx-card-note' }, c.note) : null,
@@ -592,12 +782,12 @@ window.__ModuleLoader__.load({
           !on ? t('disabled') : mounted ? t('mounted') : t('notMounted')));
     }
 
-    /* ---------------- 会话内选择下拉 ---------------- */
+    /* ================= 会话内选择下拉 ================= */
 
     function ComposerPicker({ api, sessionId, t }) {
       const [open, setOpen] = useState(false);
       const [data, setData] = useState(null);
-        const wrapRef = useRef(null);
+      const wrapRef = useRef(null);
       const close = useCallback((e) => {
         if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
       }, []);
@@ -609,7 +799,6 @@ window.__ModuleLoader__.load({
         if (!api) return;
         try { const r = await api.list(); if (r.ok) setData(r.value); } catch { /* 静默 */ }
       }, [api]);
-      // 进聊天框立即加载，之后每 30 秒静默刷新，展开时也刷新
       useEffect(() => { load(); }, [load]);
       useEffect(() => {
         const timer = setInterval(load, 30000);
@@ -673,22 +862,29 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'mcx-popover-sub' }, c.transport))))));
     }
 
-    /* ---------------- 样式（仅主题 token） ---------------- */
+    /* ================= 样式（仅主题 token） ================= */
 
     const STYLE_TEXT = `
 .mcx-page{display:flex;flex-direction:column;gap:12px;height:100%;overflow:auto;padding:20px 24px;color:var(--dsw-alias-label-primary)}
 .mcx-page-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
-.mcx-add-wrap{position:relative}
-.mcx-add-menu{position:absolute;right:0;top:calc(100% + 6px);min-width:200px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.16);padding:6px;z-index:1100;display:flex;flex-direction:column;gap:2px}
-.mcx-add-menu-title{font-size:10px;color:var(--dsw-alias-label-tertiary);padding:4px 8px}
-.mcx-add-menu-item{border:none;background:transparent;color:var(--dsw-alias-label-primary);text-align:left;font-size:12px;padding:7px 8px;border-radius:6px;cursor:pointer}
-.mcx-add-menu-item:hover{background:var(--dsw-alias-bg-layer-2)}
 .mcx-page-title{margin:0;font-size:18px;font-weight:600}
 .mcx-page-desc{margin:4px 0 0;font-size:12px;color:var(--dsw-alias-label-secondary)}
-.mcx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
-.mcx-card{position:relative;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:14px 16px;min-height:140px;display:flex;flex-direction:column;gap:6px;transition:box-shadow .15s,border-color .15s}
+.mcx-tabs{display:flex;gap:4px;border-bottom:1px solid var(--dsw-alias-border-l1);padding:0 2px}
+.mcx-tab{border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:13px;padding:8px 14px;cursor:pointer;border-bottom:2px solid transparent;border-radius:6px 6px 0 0;display:inline-flex;align-items:center;gap:6px}
+.mcx-tab:hover{color:var(--dsw-alias-label-primary)}
+.mcx-tab-active{color:var(--dsw-alias-brand-primary);border-bottom-color:var(--dsw-alias-brand-primary);font-weight:600}
+.mcx-tab-count{font-size:10px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;background:var(--dsw-alias-bg-layer-2);border-radius:999px;padding:1px 7px}
+.mcx-tab-active .mcx-tab-count{color:var(--dsw-alias-brand-primary)}
+.mcx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.mcx-card{position:relative;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:14px 16px;min-height:140px;display:flex;flex-direction:column;gap:6px;transition:box-shadow .15s,border-color .15s;text-align:left}
 .mcx-card:hover{border-color:var(--dsw-alias-border-l2);box-shadow:0 2px 10px rgba(0,0,0,.08)}
 .mcx-card-off{opacity:.55}
+.mcx-catalog-card{cursor:pointer;color:var(--dsw-alias-label-primary);font:inherit}
+.mcx-catalog-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mcx-catalog-icon{font-size:20px;line-height:1}
+.mcx-catalog-desc{font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.5;white-space:pre-wrap}
+.mcx-installed-badge{font-size:10px;color:var(--dsw-alias-state-success-primary);border:1px solid var(--dsw-alias-state-success-primary);border-radius:999px;padding:1px 8px;margin-left:auto}
+.mcx-catalog-cta{color:var(--dsw-alias-brand-primary);font-weight:600}
 .mcx-card-corner{position:absolute;top:10px;right:10px;display:flex;align-items:center;gap:6px;opacity:0;transition:opacity .12s;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:999px;padding:3px 6px;box-shadow:0 1px 6px rgba(0,0,0,.18)}
 .mcx-card:hover .mcx-card-corner,.mcx-card-corner:focus-within{opacity:1}
 .mcx-card-title{font-weight:600;font-size:14px;padding-right:70px}
@@ -715,7 +911,10 @@ window.__ModuleLoader__.load({
 .mcx-error{color:var(--dsw-alias-state-error-primary);font-size:12px}
 .mcx-modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:1000}
 .mcx-editor{background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:14px;padding:18px;width:min(440px,92vw);max-height:86vh;overflow:auto;display:flex;flex-direction:column;gap:10px;color:var(--dsw-alias-label-primary)}
+.mcx-editor-wide{width:min(520px,94vw)}
 .mcx-editor-head{display:flex;justify-content:space-between;align-items:center;font-weight:600}
+.mcx-editor-icon{font-size:16px}
+.mcx-def-desc{font-size:12px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);border-radius:8px;padding:8px 10px;line-height:1.5}
 .mcx-chipbtn{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);border-radius:999px;padding:3px 10px;font-size:11px;cursor:pointer}
 .mcx-chipbtn:hover{color:var(--dsw-alias-label-primary)}
 .mcx-field{display:flex;flex-direction:column;gap:4px;font-size:12px}
@@ -731,6 +930,8 @@ window.__ModuleLoader__.load({
 .mcx-auth-msg{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2)}
 .mcx-auth-hint{font-size:11px;color:var(--dsw-alias-label-tertiary)}
 .mcx-hint{margin:0;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.mcx-json-paste{display:flex;flex-direction:column;gap:4px;border:1px dashed var(--dsw-alias-border-l2);border-radius:10px;padding:10px}
+.mcx-json-paste textarea{font-family:monospace;font-size:11px}
 .mcx-composer{position:relative;display:inline-flex}
 .mcx-composer-btn{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);border-radius:999px;padding:2px 10px;font-size:11px;cursor:pointer;height:24px}
 .mcx-composer-btn:hover,.mcx-composer-btn-active{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary)}
@@ -748,7 +949,7 @@ window.__ModuleLoader__.load({
       return h('style', { key: 'mcx-style' }, STYLE_TEXT);
     }
 
-    /* ---------------- 图标 ---------------- */
+    /* ================= 图标 ================= */
 
     /** 链条（link）图标：两个环 + 中段连接，18/12px 都清晰。 */
     function LinkIcon({ size = 14 }) {
@@ -775,7 +976,7 @@ window.__ModuleLoader__.load({
         }));
     }
 
-    /* ---------------- Host HTTP API ---------------- */
+    /* ================= Host HTTP API ================= */
 
     async function call(method, path, body) {
       const res = await fetch(`/mcp-connectors${path}`, {
@@ -807,7 +1008,7 @@ window.__ModuleLoader__.load({
       listSessions: () => call('GET', '/sessions'),
     };
 
-    /* ---------------- 插件装配 ---------------- */
+    /* ================= 插件装配 ================= */
 
     return {
       inject: ['slots', 'locale'],
