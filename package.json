@@ -1,0 +1,35 @@
+{
+  "name": "dsh-mcp-connectors",
+  "version": "0.2.0",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "description": "Unified MCP connector manager for DeepSeek Harness: panel-based add/edit/toggle, token auth, per-session tool gating, WeChat (ClawBot) QR login & auto-reply."
+}

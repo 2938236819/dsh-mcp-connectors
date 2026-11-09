@@ -1,0 +1,6 @@
+- insert:
+    - id: mcp-connectors
+      name: 'dsh-mcp-connectors'
+      config:
+        connectors: []
+        sessions: {}

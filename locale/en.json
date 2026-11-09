@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "MCP connectors",
+    "description": "Manage MCP connectors in one card panel: add, edit, toggle, keep tokens, and choose which connectors each conversation may use."
+  }
+}
