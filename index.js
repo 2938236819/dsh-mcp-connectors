@@ -722,6 +722,7 @@ export async function apply(ctx, config = {}) {
 
   const RESTRICTORS = new Map(); // agentId -> disposer
   const GATE_PENDING = new Set(); // 因工具尚未注册而待重试的 agentId
+  const LAST_DENY = new Map(); // agentId -> deny 签名（幂等：状态未变则不重建 restrictor）
 
   /** 当前已挂载连接器的公开工具名（含 mcp__server__ 前缀）。 */
   function mountedToolNamesByServer() {
@@ -737,7 +738,9 @@ export async function apply(ctx, config = {}) {
   const applyGate = (agent) => {
     const agentCtx = agent?.ctx;
     if (!agentCtx?.tools?.restrict) {
-      dbg(`gate: agent ${agent?.id} has no tools.restrict, skip`);
+      // agent 刚创建时 ctx 可能尚未注入 tools 服务：记入 pending，等周期重试
+      if (agent?.id) GATE_PENDING.add(agent.id);
+      dbg(`gate: agent ${agent?.id} not ready (no tools.restrict), pending`);
       return;
     }
     const sessionId = String(agent.session?.id ?? agent.id ?? '');
@@ -748,13 +751,21 @@ export async function apply(ctx, config = {}) {
     for (const [serverName, names] of byServer) {
       if (!allowed.has(serverName)) deny.push(...names);
     }
+    // 幂等：期望状态与当前一致则不动
+    const denySig = deny.join(',');
+    if (RESTRICTORS.has(agent.id) && LAST_DENY.get(agent.id) === denySig) {
+      GATE_PENDING.delete(agent.id);
+      return;
+    }
     dbg(`gate: session=${sessionId} allowed=[${[...allowed]}] deny=${deny.length} tools`);
     try { RESTRICTORS.get(agent.id)?.(); } catch { /* ignore */ }
     RESTRICTORS.delete(agent.id);
+    LAST_DENY.delete(agent.id);
     if (deny.length === 0) { GATE_PENDING.delete(agent.id); return; }
     try {
       const dispose = agentCtx.tools.restrict({ deny });
       RESTRICTORS.set(agent.id, dispose);
+      LAST_DENY.set(agent.id, denySig);
       GATE_PENDING.delete(agent.id);
     } catch (e) {
       // 工具名尚未生效（挂载中）：记下，稍后重试
@@ -1255,19 +1266,18 @@ export async function apply(ctx, config = {}) {
 
   ctx.effect(() => {
     const off = ctx.on('agent/created', (agent) => applyGate(agent));
-    // 工具注册晚于 agent 创建时，restrict 会因 unknown name 失败并进入 GATE_PENDING；
-    // 挂载完成后的 reapplyGates 覆盖大多数场景，这里再兜底定期重试，否则该会话门控永久失效
+    // 工具注册与 agent ctx 就绪都可能晚于 agent/created：周期性全量重刷（幂等，deny 未变不重建），
+    // 确保任何时序下门控最终收敛，不会因某次 skip 而永久失效
     const gateRetry = setInterval(() => {
-      if (GATE_PENDING.size === 0) return;
-      for (const agent of AGENTS?.list?.() ?? []) {
-        if (GATE_PENDING.has(agent.id)) applyGate(agent);
-      }
+      for (const agent of AGENTS?.list?.() ?? []) applyGate(agent);
     }, 3000);
     ctx.effect(() => {
       for (const agent of ctx.agents?.list?.() ?? []) applyGate(agent);
       return () => {
         clearInterval(gateRetry);
-        for (const d of RESTRICTORS.values()) { try { d(); } catch { /* ignore */ } } RESTRICTORS.clear();
+        for (const d of RESTRICTORS.values()) { try { d(); } catch { /* ignore */ } }
+        RESTRICTORS.clear();
+        LAST_DENY.clear();
       };
     }, 'mcp-connectors: agent gate cleanup');
     return off;
