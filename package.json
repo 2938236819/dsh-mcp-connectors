@@ -1,5 +1,5 @@
 {
-  "name": "dsh-mcp-connectors",
+  "name": "@wfm-cn/dsh-mcp-connectors",
   "version": "0.2.0",
   "type": "module",
   "exports": {

@@ -1,6 +1,6 @@
 - insert:
     - id: mcp-connectors
-      name: 'dsh-mcp-connectors'
+      name: '@wfm-cn/dsh-mcp-connectors'
       config:
         connectors: []
         sessions: {}
