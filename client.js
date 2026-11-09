@@ -68,7 +68,7 @@ window.__ModuleLoader__.load({
         wxConfirmOnPhone: '已扫码，请在手机上确认登录…',
         wxBindTimeout: '绑定未完成，请重新点击扫码绑定',
         presetWechat: '微信 (ClawBot)',
-        presetChrome: '谷歌浏览器（Chrome DevTools · 本机运行）',
+        presetChrome: '谷歌浏览器（Chrome DevTools）',
         chromeHint: '无需令牌。保存后自动通过 npx 启动 chrome-devtools-mcp 并连接本机谷歌浏览器；首次使用请确保已安装 Chrome。',
         testConn: '测试连接',
         testing: '测试中',
@@ -143,7 +143,7 @@ window.__ModuleLoader__.load({
         wxConfirmOnPhone: 'Scanned — confirm login on your phone…',
         wxBindTimeout: 'Not completed. Click the button to try again',
         presetWechat: 'WeChat (ClawBot)',
-        presetChrome: 'Google Chrome (Chrome DevTools · local)',
+        presetChrome: 'Google Chrome (Chrome DevTools)',
         chromeHint: 'No token needed. Saving launches chrome-devtools-mcp via npx and connects to your local Chrome; make sure Chrome is installed.',
         testConn: 'Test connection',
         testing: 'Testing',
@@ -192,6 +192,55 @@ window.__ModuleLoader__.load({
     }
 
     const inputCls = 'mcx-input';
+
+    /* ================= 品牌图标（官方 logo 矢量路径，内联无需网络） =================
+     * icon 字段两种形态：
+     *   字符串  → 直接当 emoji 文本渲染（如自定义 ⚙️）
+     *   { svg } → 24x24 viewBox 的官方 logo；svg 是 (H) => 节点 的绘制函数
+     * 收录：GitHub / WeChat / Google Chrome（simple-icons 官方路径），
+     * 腾讯文档 / 金山文档无公开矢量收录，用品牌色简洁图形代替。 */
+    function DefIcon({ icon, size = 18 }) {
+      if (!icon) return null;
+      if (typeof icon === 'string') return h('span', { style: { fontSize: size + 'px', lineHeight: 1 } }, icon);
+      return h('svg', {
+        viewBox: '0 0 24 24', width: size, height: size, 'aria-hidden': true,
+        style: { display: 'block', flex: 'none' },
+      }, icon.svg(h));
+    }
+
+    const BRAND_ICONS = {
+      github: {
+        svg: (H) => H('path', {
+          fill: '#f0f6fc',
+          d: 'M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12',
+        }),
+      },
+      wechat: {
+        svg: (H) => H('path', {
+          fill: '#07C160',
+          d: 'M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.28 1.786-1.72 1.428-2.687 3.72-1.78 6.22.942 2.453 3.666 4.229 6.884 4.229.826 0 1.622-.12 2.361-.336a.722.722 0 0 1 .598.082l1.584.926a.272.272 0 0 0 .14.047c.134 0 .24-.111.24-.247 0-.06-.023-.12-.038-.177l-.327-1.233a.582.582 0 0 1-.023-.156.49.49 0 0 1 .201-.398C23.024 18.48 24 16.82 24 14.98c0-3.21-2.931-5.837-6.656-6.088V8.89c-.135-.01-.27-.027-.407-.03zm-2.53 3.274c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.97-.982zm4.844 0c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.969-.982z',
+        }),
+      },
+      chrome: {
+        svg: (H) => H('path', {
+          fill: '#4285F4',
+          d: 'M12 0C8.21 0 4.831 1.757 2.632 4.501l3.953 6.848A5.454 5.454 0 0 1 12 6.545h10.691A12 12 0 0 0 12 0zM1.931 5.47A11.943 11.943 0 0 0 0 12c0 6.012 4.42 10.991 10.189 11.864l3.953-6.847a5.45 5.45 0 0 1-6.865-2.29zm13.342 2.166a5.446 5.446 0 0 1 1.45 7.09l.002.001h-.002l-5.344 9.257c.206.01.413.016.621.016 6.627 0 12-5.373 12-12 0-1.54-.29-3.011-.818-4.364zM12 16.364a4.364 4.364 0 1 1 0-8.728 4.364 4.364 0 0 1 0 8.728Z',
+        }),
+      },
+      // 腾讯文档：官方无公开矢量，用腾讯蓝 (#0052D9) 文档图形
+      tencentDocs: {
+        svg: (H) => H(React.Fragment, null,
+          H('path', { fill: '#0052D9', d: 'M6 2h8l4 4v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z' }),
+          H('path', { fill: '#0052D9', d: 'M14 2l4 4h-4z', opacity: 0.5 }),
+          H('path', { stroke: '#fff', strokeWidth: 1.6, strokeLinecap: 'round', fill: 'none', d: 'M8 11h8M8 14.5h8M8 18h5' })),
+      },
+      // 金山文档 (WPS)：WPS 红底白 W
+      kdocs: {
+        svg: (H) => H(React.Fragment, null,
+          H('rect', { x: 1, y: 1, width: 22, height: 22, rx: 5, fill: '#EE3B24' }),
+          H('path', { stroke: '#fff', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round', fill: 'none', d: 'M6 8l2.3 8L12 9.5l3.7 6.5L18 8' })),
+      },
+    };
 
     /* ================= 微信相关组件（仅供 wechat 连接器使用） ================= */
 
@@ -331,7 +380,7 @@ window.__ModuleLoader__.load({
     const CONNECTOR_DEFS = [
       {
         id: 'tencent-docs',
-        icon: '📄',
+        icon: BRAND_ICONS.tencentDocs,
         labelKey: 'presetTencentDocs',
         descKey: 'descTencentDocs',
         lockTemplate: true,
@@ -351,7 +400,7 @@ window.__ModuleLoader__.load({
       },
       {
         id: 'kdocs',
-        icon: '📊',
+        icon: BRAND_ICONS.kdocs,
         labelKey: 'presetKdocs',
         descKey: 'descKdocs',
         lockTemplate: true,
@@ -384,7 +433,7 @@ window.__ModuleLoader__.load({
       },
       {
         id: 'github',
-        icon: '🐙',
+        icon: BRAND_ICONS.github,
         labelKey: 'presetGithub',
         descKey: 'descGithub',
         lockTemplate: true,
@@ -405,7 +454,7 @@ window.__ModuleLoader__.load({
       },
       {
         id: 'wechat',
-        icon: '💬',
+        icon: BRAND_ICONS.wechat,
         labelKey: 'presetWechat',
         descKey: 'descWechat',
         lockTemplate: true,
@@ -423,7 +472,7 @@ window.__ModuleLoader__.load({
       },
       {
         id: 'chrome',
-        icon: '🌐',
+        icon: BRAND_ICONS.chrome,
         labelKey: 'presetChrome',
         descKey: 'descChrome',
         lockTemplate: true,
@@ -604,7 +653,7 @@ window.__ModuleLoader__.load({
 
       return h('form', { className: 'mcx-editor mcx-editor-wide', onSubmit: submit },
         h('div', { className: 'mcx-editor-head' },
-          h('span', null, h('span', { className: 'mcx-editor-icon' }, def.icon), ' ', isNew ? t(def.labelKey) : t('edit') + ' · ' + (draft.title || initial?.title || t(def.labelKey))),
+          h('span', null, h('span', { className: 'mcx-editor-icon' }, h(DefIcon, { icon: def.icon, size: 16 })), ' ', isNew ? t(def.labelKey) : t('edit') + ' · ' + (draft.title || initial?.title || t(def.labelKey))),
           h('button', { type: 'button', className: 'mcx-iconbtn', onClick: onClose, 'aria-label': 'close' }, '✕')),
         // 连接器说明（“全部”目录点进来先看到这是什么）
         h('div', { className: 'mcx-def-desc' }, t(def.descKey)),
@@ -755,7 +804,7 @@ window.__ModuleLoader__.load({
     function CatalogCard({ def, t, installedCount, onOpen }) {
       return h('button', { type: 'button', className: 'mcx-card mcx-catalog-card', onClick: onOpen },
         h('div', { className: 'mcx-catalog-head' },
-          h('span', { className: 'mcx-catalog-icon' }, def.icon),
+          h('span', { className: 'mcx-catalog-icon' }, h(DefIcon, { icon: def.icon, size: 22 })),
           h('span', { className: 'mcx-card-title' }, t(def.labelKey)),
           installedCount > 0 ? h('span', { className: 'mcx-installed-badge' }, `✓ ${t('installedBadge')} ×${installedCount}`) : null),
         h('div', { className: 'mcx-catalog-desc' }, t(def.descKey)),
@@ -767,13 +816,15 @@ window.__ModuleLoader__.load({
     function Card({ c, mounted, t, onToggle, onEdit }) {
       const on = c.enabled !== false;
       const ctype = inferType(c);
-      const def = ctype ? DEF_BY_ID[ctype] : undefined;
+      const def = DEF_BY_ID[ctype ?? 'custom'] ?? DEF_BY_ID.custom;
       const typeLabel = def && def.id !== 'custom' ? t(def.labelKey) : null;
       return h('div', { className: 'mcx-card' + (on ? '' : ' mcx-card-off') },
         h('div', { className: 'mcx-card-corner' },
           h('button', { type: 'button', className: 'mcx-iconbtn', title: t('edit'), onClick: onEdit, 'aria-label': t('edit') }, '✎'),
           h(Switch, { checked: on, onChange: onToggle, title: on ? t('enabled') : t('disabled') })),
-        h('div', { className: 'mcx-card-title' }, (def ? def.icon + ' ' : ''), c.title || c.serverName),
+        h('div', { className: 'mcx-card-title' },
+          h('span', { style: { display: 'inline-flex', alignItems: 'center', marginRight: '6px', verticalAlign: '-3px' } }, def ? h(DefIcon, { icon: def.icon, size: 15 }) : null),
+          c.title || c.serverName),
         h('div', { className: 'mcx-card-sub' }, (typeLabel ? typeLabel + ' · ' : '') + `mcp__${c.serverName}__*`),
         h('div', { className: 'mcx-card-url' }, c.transport === 'stdio' ? `${c.command} ${(c.args ?? []).join(' ')}` : c.url),
         c.note ? h('div', { className: 'mcx-card-note' }, c.note) : null,
@@ -880,8 +931,11 @@ window.__ModuleLoader__.load({
 .mcx-card:hover{border-color:var(--dsw-alias-border-l2);box-shadow:0 2px 10px rgba(0,0,0,.08)}
 .mcx-card-off{opacity:.55}
 .mcx-catalog-card{cursor:pointer;color:var(--dsw-alias-label-primary);font:inherit}
-.mcx-catalog-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.mcx-catalog-icon{font-size:20px;line-height:1}
+.mcx-catalog-head{display:flex;align-items:center;gap:8px}
+/* 图标 / 标题 / 角标各占独立区域：标题过长只在自己的区域内换行，绝不把图标挤走 */
+.mcx-catalog-head .mcx-card-title{flex:1;min-width:0;padding-right:0;line-height:1.35}
+.mcx-catalog-head .mcx-installed-badge{flex:none;margin-left:0}
+.mcx-catalog-icon{font-size:20px;line-height:1;flex:none;display:inline-flex}
 .mcx-catalog-desc{font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.5;white-space:pre-wrap}
 .mcx-installed-badge{font-size:10px;color:var(--dsw-alias-state-success-primary);border:1px solid var(--dsw-alias-state-success-primary);border-radius:999px;padding:1px 8px;margin-left:auto}
 .mcx-catalog-cta{color:var(--dsw-alias-brand-primary);font-weight:600}

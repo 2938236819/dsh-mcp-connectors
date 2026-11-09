@@ -49,3 +49,12 @@ dsh-mcp-connectors
 ## License
 
 MIT
+
+## 威胁模型与会话门控边界
+
+会话门控（restrict + tools.guard 双层）只覆盖**工具调用通道**。持有 bash + 网络权限的 AI 理论上可以读 `~/.dsh/mcp-connectors.json` 中的 token 明文并自行直连 MCP 端点绕过门控（实际发生过：AI 通过 mcp-connectors skill 文档获知 token 位置后用 curl 自建 MCP 会话）。
+
+缓解措施：
+- skill 文档已加"会话权限红线"并将触发条件收窄为"维护插件本身"，普通数据请求不再加载该文档
+- token 文件权限 600
+- 彻底阻断需要平台层支持（会话沙箱禁网/禁读 HOME），插件层无法完全防御
