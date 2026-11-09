@@ -711,28 +711,57 @@ export async function apply(ctx, config = {}) {
     for (const [sn, w] of want) {
       if (!MOUNTED.has(sn)) await mount(w);
     }
+    // 工具集变化后重新计算各会话的门控（deny 依赖已注册的工具名）
+    reapplyGates();
   };
 
   /* ---------------- 每会话工具门控 ---------------- */
 
-  const RESTRICTORS = new Map(); // agentId -> dispose
+  const RESTRICTORS = new Map(); // agentId -> disposer
+  const GATE_PENDING = new Set(); // 因工具尚未注册而待重试的 agentId
+
+  /** 当前已挂载连接器的公开工具名（含 mcp__server__ 前缀）。 */
+  function mountedToolNamesByServer() {
+    const out = new Map(); // serverName -> string[]
+    for (const [serverName, rec] of MOUNTED) {
+      const names = (rec.tools ?? []).map((raw) => publicToolName(serverName, raw));
+      if (names.length) out.set(serverName, names);
+    }
+    return out;
+  }
+
+  /** 对单个 agent 应用会话级门控：禁用连接器的工具全部 deny。 */
   const applyGate = (agent) => {
     const agentCtx = agent?.ctx;
     if (!agentCtx?.tools?.restrict) return;
     const sessionId = String(agent.session?.id ?? agent.id ?? '');
-    try { RESTRICTORS.get(agent.id)?.(); } catch { /* ignore */ }
     const allowed = enabledServersOf(currentConfig(), sessionId);
-    try {
-      const dispose = agentCtx.tools.restrict((tool) => {
-        const name = typeof tool === 'string' ? tool : tool?.name ?? tool?.definition?.name;
-        if (typeof name !== 'string') return true;
-        const m = /^mcp__([A-Za-z0-9_-]+)__/.exec(name);
-        return m === null || allowed.has(m[1]);
-      });
-      RESTRICTORS.set(agent.id, dispose);
-    } catch (e) {
-      warn(`会话 ${sessionId} 工具门控失败：`, e?.message ?? e);
+    const byServer = mountedToolNamesByServer();
+    // 还没挂载完（工具尚未注册）时调用 restrict 会因 unknown name 抛错：留到挂载后再试
+    const deny = [];
+    for (const [serverName, names] of byServer) {
+      if (!allowed.has(serverName)) deny.push(...names);
     }
+    try { RESTRICTORS.get(agent.id)?.(); } catch { /* ignore */ }
+    RESTRICTORS.delete(agent.id);
+    if (deny.length === 0) { GATE_PENDING.delete(agent.id); return; }
+    try {
+      const dispose = agentCtx.tools.restrict({ deny });
+      RESTRICTORS.set(agent.id, dispose);
+      GATE_PENDING.delete(agent.id);
+    } catch (e) {
+      // 工具名尚未生效（挂载中）：记下，稍后重试
+      if (/unknown global tool/i.test(String(e?.message ?? ''))) {
+        GATE_PENDING.add(agent.id);
+      } else {
+        warn(`会话 ${sessionId} 工具门控失败：`, e?.message ?? e);
+      }
+    }
+  };
+
+  /** 挂载/卸载后重新应用所有 agent 的门控（门控依赖已注册的工具名）。 */
+  const reapplyGates = () => {
+    for (const agent of AGENTS?.list?.() ?? []) applyGate(agent);
   };
 
   /* ---------------- HTTP 路由 ---------------- */
