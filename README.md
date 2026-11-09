@@ -56,5 +56,5 @@ MIT
 
 缓解措施：
 - skill 文档已加"会话权限红线"并将触发条件收窄为"维护插件本身"，普通数据请求不再加载该文档
-- token 文件权限 600
+- token/secret 全部迁入 macOS 钥匙串（`dsh-mcp-connectors` service item），json 只存 `tokenRef` 标记；bash 读文件已拿不到任何凭据
 - 彻底阻断需要平台层支持（会话沙箱禁网/禁读 HOME），插件层无法完全防御

@@ -13,15 +13,89 @@
  */
 import { readFileSync, writeFileSync, mkdirSync, appendFileSync, readdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 
 const DEBUG_LOG = `${homedir()}/.dsh/mcp-connectors-debug.log`;
 function dbg(msg, err) {
   try {
     appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${msg}${err ? ` :: ${err?.stack ?? err}` : ''}\n`);
   } catch { /* never break plugin */ }
+}
+
+/* ---------------- 凭据保险箱：macOS 钥匙串 ----------------
+ * token/secret 绝不落盘明文。json 只存 tokenRef/secretRef 标记，
+ * 运行时按需从登录钥匙串读取。其他进程（含 AI 的 bash）读 json 拿不到任何凭据。 */
+const KEYCHAIN_SERVICE = 'dsh-mcp-connectors';
+
+function kcArgs(kind, serverName) {
+  return ['-s', KEYCHAIN_SERVICE, '-a', `${kind}:${serverName}`];
+}
+
+function keychainSet(kind, serverName, value) {
+  try {
+    execFileSync('security', ['add-generic-password', ...kcArgs(kind, serverName), '-w', value, '-U'], { stdio: 'ignore' });
+    return true;
+  } catch (e) {
+    dbg(`钥匙串写入失败（${kind}:${serverName}）：${String(e?.message ?? e).split('\n')[0].slice(0, 120)}`);
+    return false;
+  }
+}
+
+function keychainGet(kind, serverName) {
+  try {
+    const out = execFileSync('security', ['find-generic-password', ...kcArgs(kind, serverName), '-w'], { encoding: 'utf8' });
+    return out.trim();
+  } catch {
+    return '';
+  }
+}
+
+function keychainDelete(kind, serverName) {
+  try { execFileSync('security', ['delete-generic-password', ...kcArgs(kind, serverName)], { stdio: 'ignore' }); } catch { /* 不存在即无妨 */ }
+}
+
+/** 读取连接器凭据：优先钥匙串；兼容迁移前 json 中的明文（读到后立即搬入钥匙串并抹除）。 */
+function tokenOf(c) {
+  if (c.tokenRef) return keychainGet('token', c.serverName);
+  if (c.token) {
+    if (keychainSet('token', c.serverName, c.token)) {
+      c.tokenRef = true;
+      delete c.token;
+      migratePersist('token', c.serverName);
+      return keychainGet('token', c.serverName);
+    }
+    return c.token;
+  }
+  return '';
+}
+
+function secretOf(c) {
+  if (c.secretRef) return keychainGet('secret', c.serverName);
+  if (c.secret) {
+    if (keychainSet('secret', c.serverName, c.secret)) {
+      c.secretRef = true;
+      delete c.secret;
+      migratePersist('secret', c.serverName);
+      return keychainGet('secret', c.serverName);
+    }
+    return c.secret;
+  }
+  return '';
+}
+
+/** 迁移后抹除 json 中该连接器的凭据明文（直接重写文件，不走 persist 以避免递归）。 */
+function migratePersist(kind, serverName) {
+  try {
+    const file = `${homedir()}/.dsh/mcp-connectors.json`;
+    const raw = JSON.parse(readFileSync(file, 'utf8'));
+    const c = (raw.connectors ?? []).find((x) => x.serverName === serverName);
+    if (!c) return;
+    if (kind === 'token' && c.token) { delete c.token; c.tokenRef = true; }
+    if (kind === 'secret' && c.secret) { delete c.secret; c.secretRef = true; }
+    writeFileSync(file, JSON.stringify(raw, null, 2));
+  } catch (e) { dbg(`migratePersist 失败：${String(e?.message ?? e).slice(0, 100)}`); }
 }
 
 const ROUTE = '/mcp-connectors';
@@ -69,7 +143,10 @@ function sanitizeConnector(input) {
     if (!secret) throw new Error('企业微信连接器必须填写应用的 Secret');
     c.corpid = corpid;
     // '●' 是界面打码值（未修改），由 /save 的保留逻辑回填真实凭据
-    if (secret !== '●') c.secret = secret;
+    if (secret !== '●') {
+      if (keychainSet('secret', serverName, secret)) c.secretRef = true;
+      else c.secret = secret;
+    }
     const agentid = parseInt(String(input.agentid ?? ''), 10);
     if (Number.isInteger(agentid) && agentid > 0) c.agentid = agentid;
     return c;
@@ -97,7 +174,11 @@ function sanitizeConnector(input) {
         ?? '';
     }
     token = token.replace(/["'”“]/g, '').trim();
-    if (token && token !== '●') c.token = token;
+    // 凭据入钥匙串，json 只存引用；明文绝不落盘
+    if (token && token !== '●') {
+      if (keychainSet('token', serverName, token)) c.tokenRef = true;
+      else c.token = token; // 钥匙串不可用时退回内存（不落盘：persist 前会再尝试）
+    }
     const headers = input.headers && typeof input.headers === 'object' ? StringMap(input.headers) : {};
     if (Object.keys(headers).length) c.headers = headers;
   }
@@ -110,15 +191,16 @@ function StringMap(obj) {
   return out;
 }
 
-/** 影响挂载的字段指纹（标题/备注/启停不触发重挂）。 */
+/** 影响挂载的字段指纹（标题/备注/启停不触发重挂）。凭据只取哈希，不进指纹明文。 */
 function signature(c) {
+  const credHash = (v) => v ? createHash('sha256').update(v).digest('hex').slice(0, 12) : '';
   return JSON.stringify({
     serverName: c.serverName,
     transport: c.transport,
     corpid: c.corpid,
-    secret: c.secret,
+    secret: credHash(secretOf(c)),
     url: c.url,
-    token: c.token,
+    token: credHash(tokenOf(c)),
     headers: c.headers,
     command: c.command,
     args: c.args,
@@ -187,6 +269,15 @@ export async function apply(ctx, config = {}) {
   let STATE = readState();
 
   const persist = async () => {
+    // 兜底：任何仍在内存的凭据明文，落盘前最后尝试搬入钥匙串
+    for (const c of STATE.connectors ?? []) {
+      if (c.token && !c.tokenRef && keychainSet('token', c.serverName, c.token)) {
+        c.tokenRef = true; delete c.token;
+      }
+      if (c.secret && !c.secretRef && keychainSet('secret', c.serverName, c.secret)) {
+        c.secretRef = true; delete c.secret;
+      }
+    }
     writeFileSync(STATE_FILE, JSON.stringify(STATE, null, 2));
   };
 
@@ -219,10 +310,11 @@ export async function apply(ctx, config = {}) {
   const HTTP_SESSIONS = new Map(); // serverName -> { id }
 
   function sessionHeaders(c) {
+    const tok = tokenOf(c);
     return {
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
-      ...(c.token ? { authorization: `Bearer ${c.token}` } : {}),
+      ...(tok ? { authorization: `Bearer ${tok}` } : {}),
       ...(c.headers ?? {}),
     };
   }
@@ -463,7 +555,7 @@ export async function apply(ctx, config = {}) {
     const rec = WECOM_TOKENS.get(c.serverName);
     if (rec && Date.now() < rec.expiresAt - 120000) return rec.token;
     const res = await fetch(
-      `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${encodeURIComponent(c.corpid)}&corpsecret=${encodeURIComponent(c.secret)}`,
+      `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${encodeURIComponent(c.corpid)}&corpsecret=${encodeURIComponent(secretOf(c))}`,
       { signal: AbortSignal.timeout(15000) },
     );
     const j = await res.json().catch(() => null);
@@ -815,8 +907,8 @@ export async function apply(ctx, config = {}) {
     return {
       connectors: cfg.connectors.map((c) => ({
         ...c,
-        token: c.token ? '●' : '',
-        secret: c.secret ? '●' : '',
+        token: (c.tokenRef || c.token) ? '●' : '',
+        secret: (c.secretRef || c.secret) ? '●' : '',
       })),
       sessions: cfg.sessions ?? {},
       mounted: [...MOUNTED.keys()],
@@ -877,11 +969,13 @@ export async function apply(ctx, config = {}) {
       const cfg = currentConfig();
       const idx = cfg.connectors.findIndex((x) => x.id === c.id || x.serverName === c.serverName);
       // token/secret 留空（编辑其他字段）时沿用已存储的凭据，绝不因顺手改动而丢失
-      if (!c.token && idx >= 0 && cfg.connectors[idx].token) {
-        c.token = cfg.connectors[idx].token;
+      if (!c.token && !c.tokenRef && idx >= 0) {
+        const stored = cfg.connectors[idx];
+        if (stored.tokenRef || stored.token) c.tokenRef = true; // 凭据仍在钥匙串/原值中
       }
-      if (c.transport === 'wecom' && !c.secret && idx >= 0 && cfg.connectors[idx].secret) {
-        c.secret = cfg.connectors[idx].secret;
+      if (c.transport === 'wecom' && !c.secret && !c.secretRef && idx >= 0) {
+        const storedW = cfg.connectors[idx];
+        if (storedW.secretRef || storedW.secret) c.secretRef = true;
       }
       const next = idx >= 0
         ? cfg.connectors.map((x, i) => (i === idx ? c : x))
@@ -901,6 +995,9 @@ export async function apply(ctx, config = {}) {
       STATE = { ...cfg, connectors: next };
       await unmount(target.serverName, '已删除');
       await persist();
+      // 凭据随连接器一并从钥匙串清除
+      keychainDelete('token', target.serverName);
+      keychainDelete('secret', target.serverName);
       return { ok: true, value: { removed: id } };
     },
 
@@ -963,7 +1060,12 @@ export async function apply(ctx, config = {}) {
               const cur = currentConfig();
               const idx = cur.connectors.findIndex((x) => x.serverName === serverName);
               if (idx >= 0) {
-                STATE = { ...cur, connectors: cur.connectors.map((x, i2) => (i2 === idx ? { ...x, token } : x)) };
+                // token 入钥匙串，json 只存引用
+                if (keychainSet('token', serverName, token)) {
+                  STATE = { ...cur, connectors: cur.connectors.map((x, i2) => (i2 === idx ? { ...x, tokenRef: true, token: undefined } : x)) };
+                } else {
+                  STATE = { ...cur, connectors: cur.connectors.map((x, i2) => (i2 === idx ? { ...x, token } : x)) };
+                }
                 await persist();
                 await syncMounts();
               }
@@ -1113,7 +1215,7 @@ export async function apply(ctx, config = {}) {
       const headers = {
         'content-type': 'application/json',
         accept: 'application/json, text/event-stream',
-        ...(c.token ? { authorization: `Bearer ${c.token}` } : {}),
+        ...(tokenOf(c) ? { authorization: `Bearer ${tokenOf(c)}` } : {}),
         ...(c.headers ?? {}),
       };
       const rpcCall = async (payload, sid) => {
@@ -1168,9 +1270,9 @@ export async function apply(ctx, config = {}) {
         return { ok: true, value: { ok: false, message: String(e?.message ?? e) } };
       }
       // 编辑器里 token 打码（●）或留空时，回退到已存储的 token
-      if (!c.token && c.id) {
+      if (!c.token && !c.tokenRef && c.id) {
         const stored = currentConfig().connectors.find((x) => x.id === c.id || x.serverName === c.serverName);
-        if (stored?.token) c.token = stored.token;
+        if (stored?.tokenRef || stored?.token) c.tokenRef = true;
       }
       if (c.transport === 'wecom') {
         try {
@@ -1191,7 +1293,7 @@ export async function apply(ctx, config = {}) {
       const headers = {
         'content-type': 'application/json',
         accept: 'application/json, text/event-stream',
-        ...(c.token ? { authorization: `Bearer ${c.token}` } : {}),
+        ...(tokenOf(c) ? { authorization: `Bearer ${tokenOf(c)}` } : {}),
         ...(c.headers ?? {}),
       };
       const rpc = async (payload, sessionHeader) => {
@@ -1338,7 +1440,15 @@ export async function apply(ctx, config = {}) {
     dbg('plugin teardown: pollers stopped, stdio clients disposed');
   }, 'mcp-connectors: weixin poller cleanup');
 
+  // 启动迁移：把 json 中遗留的凭据明文搬入钥匙串并抹除（tokenOf/secretOf 内联完成）
+  try {
+    for (const c of currentConfig().connectors) {
+      if (c.token) tokenOf(c);
+      if (c.secret) secretOf(c);
+    }
+  } catch (e) { dbg('keychain migrate failed', e); }
+
   // 启动收敛（不阻塞插件激活）
   syncMounts().catch((e) => warn('启动挂载收敛失败：', e?.message ?? e));
-  log('MCP 连接器中心已就绪', `(${ROUTE})`);
+  log('MCP 连接器中心已就绪（凭据存钥匙串）', `(${ROUTE})`);
 }
