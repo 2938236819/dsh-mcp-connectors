@@ -645,12 +645,6 @@ window.__ModuleLoader__.load({
           type: 'button', className: 'mcx-composer-btn' + (open ? ' mcx-composer-btn-active' : ''),
           onClick: () => setOpen((o) => !o), title: t('composerOpen'),
         }, h(LinkIcon, { size: 12 }), h('span', null, t('composerOpen')),
-          data && enabledConnectors.length > 0 && h('span', { className: 'mcx-composer-dots', 'aria-hidden': true },
-            enabledConnectors.map((c) => h('span', {
-              key: c.id,
-              className: 'mcx-mini-dot ' + ((data.mounted ?? []).includes(c.serverName) ? 'mcx-mini-dot-on' : 'mcx-mini-dot-warn'),
-              title: (c.title || c.serverName) + ((data.mounted ?? []).includes(c.serverName) ? '' : ' · ' + t('notMounted')),
-            }))),
           h('span', { className: 'mcx-composer-count' }, count)),
         open && h('div', { className: 'mcx-popover' },
           enabledConnectors.length === 0
@@ -731,11 +725,7 @@ window.__ModuleLoader__.load({
 .mcx-composer{position:relative;display:inline-flex}
 .mcx-composer-btn{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);border-radius:999px;padding:2px 10px;font-size:11px;cursor:pointer;height:24px}
 .mcx-composer-btn:hover,.mcx-composer-btn-active{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary)}
-.mcx-composer-count{font-size:10px;color:var(--dsw-alias-label-tertiary)}
-.mcx-composer-dots{display:inline-flex;align-items:center;gap:3px;margin-left:2px}
-.mcx-mini-dot{width:6px;height:6px;border-radius:50%;display:inline-block}
-.mcx-mini-dot-on{background:var(--dsw-alias-state-success-primary)}
-.mcx-mini-dot-warn{background:var(--dsw-alias-state-warn-primary)}
+.mcx-composer-count{font-size:10px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
 .mcx-popover{position:absolute;bottom:calc(100% + 8px);left:0;min-width:240px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:10px;display:flex;flex-direction:column;gap:6px;z-index:1200;color:var(--dsw-alias-label-primary)}
 .mcx-popover-head{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--dsw-alias-label-secondary)}
 .mcx-popover-row{display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 6px;border-radius:6px;cursor:pointer}
