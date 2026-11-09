@@ -621,9 +621,9 @@ window.__ModuleLoader__.load({
         () => (data?.connectors ?? []).filter((c) => c.enabled !== false), [data]);
       const chosen = useMemo(() => {
         if (!data || !sessionId) return null;
-        const pick = data.sessions?.[sessionId];
-        return pick ? new Set(pick) : new Set(enabledConnectors.map((c) => c.serverName));
-      }, [data, sessionId, enabledConnectors]);
+        // fail-closed：未记录的会话默认不勾选任何连接器
+        return new Set(data.sessions?.[sessionId] ?? []);
+      }, [data, sessionId]);
       const count = chosen ? `${chosen.size}/${enabledConnectors.length}` : '–';
 
       const toggleServer = async (sn) => {
@@ -633,16 +633,12 @@ window.__ModuleLoader__.load({
         const r = await api.setSession({ sessionId, enabled: [...next] });
         if (r.ok) applySession(next);
       };
-      /** 与后端 POST /session 的落盘规则保持镜像：全选时删除会话记录（=默认全启用），否则保存列表 */
+      /** 与后端 POST /session 落盘规则镜像：直接保存勾选列表（全选=完整数组，全取消=空数组） */
       const applySession = (nextSet) => {
-        setData((d) => {
-          const sessions = { ...(d?.sessions ?? {}) };
-          const allOn = enabledConnectors.length > 0
-            && enabledConnectors.every((c) => nextSet.has(c.serverName));
-          if (allOn) delete sessions[sessionId];
-          else sessions[sessionId] = [...nextSet];
-          return { ...d, sessions };
-        });
+        setData((d) => ({
+          ...d,
+          sessions: { ...(d?.sessions ?? {}), [sessionId]: [...nextSet] },
+        }));
       };
       const allOn = Boolean(chosen) && enabledConnectors.length > 0
         && enabledConnectors.every((c) => chosen.has(c.serverName));

@@ -128,7 +128,8 @@ function signature(c) {
 function enabledServersOf(config, sessionId) {
   const all = (config?.connectors ?? []).filter((c) => c.enabled !== false).map((c) => c.serverName);
   const chosen = config?.sessions?.[sessionId];
-  if (!chosen) return new Set(all);
+  // fail-closed：未记录的会话默认不启用任何连接器，必须在该会话中显式勾选
+  if (!chosen) return new Set();
   return new Set(all.filter((s) => chosen.includes(s)));
 }
 
@@ -388,6 +389,7 @@ export async function apply(ctx, config = {}) {
     const list = await mcpRpc(c, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const tools = list?.result?.tools ?? [];
     const disposers = [];
+    const registeredNames = []; // 只记录实际注册成功的名字：deny 名单必须与全局注册表严格一致
     for (const t of tools.slice(0, 300)) {
       if (!t?.name) continue;
       const name = publicToolName(c.serverName, t.name);
@@ -443,12 +445,13 @@ export async function apply(ctx, config = {}) {
           },
         }));
         disposers.push(dispose);
+        registeredNames.push(t.name); // 原始名；消费方（deny 名单）会用 publicToolName 再转换
       } catch (e) {
         dbg(`register tool FAILED ${name}`, e);
         warn(`注册工具 ${name} 失败：`, e?.message ?? e);
       }
     }
-    return { count: disposers.length, disposers, toolNames: tools.map((t) => t.name) };
+    return { count: disposers.length, disposers, toolNames: registeredNames };
   }
 
   /* ---------------- 企业微信（官方 API）：token 自动续期 + 内置工具 ---------------- */
@@ -733,7 +736,10 @@ export async function apply(ctx, config = {}) {
   /** 对单个 agent 应用会话级门控：禁用连接器的工具全部 deny。 */
   const applyGate = (agent) => {
     const agentCtx = agent?.ctx;
-    if (!agentCtx?.tools?.restrict) return;
+    if (!agentCtx?.tools?.restrict) {
+      dbg(`gate: agent ${agent?.id} has no tools.restrict, skip`);
+      return;
+    }
     const sessionId = String(agent.session?.id ?? agent.id ?? '');
     const allowed = enabledServersOf(currentConfig(), sessionId);
     const byServer = mountedToolNamesByServer();
@@ -742,6 +748,7 @@ export async function apply(ctx, config = {}) {
     for (const [serverName, names] of byServer) {
       if (!allowed.has(serverName)) deny.push(...names);
     }
+    dbg(`gate: session=${sessionId} allowed=[${[...allowed]}] deny=${deny.length} tools`);
     try { RESTRICTORS.get(agent.id)?.(); } catch { /* ignore */ }
     RESTRICTORS.delete(agent.id);
     if (deny.length === 0) { GATE_PENDING.delete(agent.id); return; }
@@ -753,6 +760,7 @@ export async function apply(ctx, config = {}) {
       // 工具名尚未生效（挂载中）：记下，稍后重试
       if (/unknown global tool/i.test(String(e?.message ?? ''))) {
         GATE_PENDING.add(agent.id);
+        dbg(`gate: pending session=${sessionId} err=${String(e?.message ?? '').slice(0, 200)}`);
       } else {
         warn(`会话 ${sessionId} 工具门控失败：`, e?.message ?? e);
       }
@@ -882,10 +890,8 @@ export async function apply(ctx, config = {}) {
         : [];
       const cfg = currentConfig();
       const sessions = { ...(cfg.sessions ?? {}) };
-      const enabledNow = cfg.connectors.filter((c) => c.enabled !== false);
-      const allOn = enabledNow.length > 0 && enabledNow.every((c) => list.includes(c.serverName));
-      if (allOn) delete sessions[sessionId];
-      else sessions[sessionId] = list;
+      // 直接保存勾选列表：全选=完整数组，全部取消=空数组。未记录会话默认全关（fail-closed）
+      sessions[sessionId] = list;
       STATE = { ...cfg, sessions };
       await persist();
       for (const agent of ctx.agents?.list?.() ?? []) applyGate(agent);
@@ -1249,9 +1255,20 @@ export async function apply(ctx, config = {}) {
 
   ctx.effect(() => {
     const off = ctx.on('agent/created', (agent) => applyGate(agent));
+    // 工具注册晚于 agent 创建时，restrict 会因 unknown name 失败并进入 GATE_PENDING；
+    // 挂载完成后的 reapplyGates 覆盖大多数场景，这里再兜底定期重试，否则该会话门控永久失效
+    const gateRetry = setInterval(() => {
+      if (GATE_PENDING.size === 0) return;
+      for (const agent of AGENTS?.list?.() ?? []) {
+        if (GATE_PENDING.has(agent.id)) applyGate(agent);
+      }
+    }, 3000);
     ctx.effect(() => {
       for (const agent of ctx.agents?.list?.() ?? []) applyGate(agent);
-      return () => { for (const d of RESTRICTORS.values()) { try { d(); } catch { /* ignore */ } } RESTRICTORS.clear(); };
+      return () => {
+        clearInterval(gateRetry);
+        for (const d of RESTRICTORS.values()) { try { d(); } catch { /* ignore */ } } RESTRICTORS.clear();
+      };
     }, 'mcp-connectors: agent gate cleanup');
     return off;
   }, 'mcp-connectors: agent gating');
