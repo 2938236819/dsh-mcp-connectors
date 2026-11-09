@@ -21,6 +21,8 @@ dsh-mcp-connectors
 
 依赖：Node.js ≥ 18，微信功能需要最新版微信并开通「微信 ClawBot」插件。
 
+支持的平台：macOS / Linux / Windows（stdio 子进程在 Windows 上经 shell 启动 `npx.cmd`）。
+
 ## 使用
 
 - 侧边栏「连接器」面板 → 「+ 添加连接器」→ 选择类型

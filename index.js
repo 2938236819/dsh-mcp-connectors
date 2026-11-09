@@ -231,9 +231,20 @@ export async function apply(ctx, config = {}) {
   function stdioClient(c) {
     let cl = STDIO_CLIENTS.get(c.serverName);
     if (cl) return cl;
-    const child = spawn(c.command, c.args ?? [], {
+    // Windows 上 npx/pnpm 等命令是 .cmd shim，必须经 shell 才能启动；
+    // macOS/Linux 不加 shell，避免参数被 shell 二次解析
+    const isWin = process.platform === 'win32';
+    let command = c.command;
+    if (isWin) {
+      const s = String(command).trim();
+      if (/^(npx|npm|pnpm|yarn|bunx?|uvx?|python3?|node)$/i.test(s)) command = `${s}.cmd`;
+      else if (/[\\/ ]/.test(s) && !/\.(cmd|exe|bat|ps1)$/i.test(s)) command = s; // 完整路径交给 shell 解析
+    }
+    const child = spawn(command, c.args ?? [], {
       env: { ...process.env, ...(c.env ?? {}) },
       stdio: ['pipe', 'pipe', 'pipe'],
+      shell: isWin,
+      windowsHide: true,
     });
     child.on('exit', () => STDIO_CLIENTS.delete(c.serverName));
     const pending = new Map();
@@ -915,7 +926,7 @@ export async function apply(ctx, config = {}) {
     'POST /wx-auth/start': async (body) => {
       const serverName = String(body?.serverName ?? 'weixin-mcp');
       const WX_BASE = 'https://ilinkai.weixin.qq.com';
-      const ACCOUNTS_DIR = `${process.env.HOME}/.weixin-mcp/accounts`;
+      const ACCOUNTS_DIR = `${homedir()}/.weixin-mcp/accounts`;
       const genQr = async (url) => {
         const { default: QR } = await import('qrcode');
         return QR.toDataURL(url, { width: 360, margin: 2 });

@@ -226,7 +226,7 @@ window.__ModuleLoader__.load({
       const wsName = (s) => {
         const cwd = String(s.cwd ?? '');
         if (!cwd) return s.live ? '（活跃）' : '';
-        const parts = cwd.split('/').filter(Boolean);
+        const parts = cwd.split(/[\\/]/).filter(Boolean);
         return parts[parts.length - 1] ?? cwd;
       };
       const label = (s) => s.title || s.id;
