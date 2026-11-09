@@ -56,5 +56,5 @@ MIT
 
 缓解措施：
 - skill 文档已加"会话权限红线"并将触发条件收窄为"维护插件本身"，普通数据请求不再加载该文档
-- token/secret 存入跨平台凭据保险箱：macOS 钥匙串 / Windows 凭据管理器 / Linux secret-tool（无保险箱时降级为机器指纹派生密钥的 AES-256-GCM 加密文件）；json 只存 `tokenRef` 标记，磁盘零明文，三平台行为一致
+- token/secret 存入加密保险箱（`~/.dsh/mcp-connectors.vault`，权限 600）：AES-256-GCM，密钥由本机指纹（IOPlatformUUID / MachineGuid / machine-id）+ 开源盐 PBKDF2 派生。纯 Node 标准库实现，三平台零差异；json 只存 `tokenRef` 标记，磁盘零明文。算法开源无妨——密文离开本机（或拿不到机器指纹）即无法解密
 - 彻底阻断需要平台层支持（会话沙箱禁网/禁读 HOME），插件层无法完全防御

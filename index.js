@@ -24,77 +24,39 @@ function dbg(msg, err) {
   } catch { /* never break plugin */ }
 }
 
-/* ---------------- 凭据保险箱：跨平台，磁盘零明文 ----------------
- * token/secret 绝不落盘明文。json 只存 tokenRef/secretRef 标记，运行时按需读取：
- *   darwin  → 登录钥匙串（security）
- *   win32   → 凭据管理器（PowerShell P/Invoke CredRead/CredWrite）
- *   linux   → secret-tool（GNOME Keyring / KWallet）
- *   兜底    → 机器指纹派生密钥的 AES-256-GCM 加密文件（磁盘仍无明文，强度降级）
- * 上层统一走 credSet/credGet/credDelete + 内存缓存，无平台差异。 */
-const CRED_SERVICE = 'dsh-mcp-connectors';
-const CRED_CACHE = new Map(); // 'kind:serverName' -> value（进程内缓存，避免重复拉起子进程）
-let CRED_MODE = null; // 'keychain' | 'credman' | 'secret' | 'vault'
-
-function credMode() {
-  if (CRED_MODE) return CRED_MODE;
-  const p = platform();
-  if (p === 'darwin') CRED_MODE = 'keychain';
-  else if (p === 'win32') CRED_MODE = 'credman';
-  else {
-    try { execFileSync('secret-tool', ['--version'], { stdio: 'ignore' }); CRED_MODE = 'secret'; }
-    catch { CRED_MODE = 'vault'; }
-  }
-  dbg(`cred store mode: ${CRED_MODE} (${p})`);
-  return CRED_MODE;
-}
-
-function credKey(kind, serverName) { return `${kind}:${serverName}`; }
-
-/* --- Windows 凭据管理器（P/Invoke，无需任何依赖） --- */
-const WIN_CRED_PS = `
-using System;using System.Runtime.InteropServices;
-public class CredMan{
- [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
- public static extern bool CredWriteW(ref CREDENTIAL cred,uint flags);
- [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
- public static extern bool CredReadW(string target,int type,uint flags,out IntPtr cred);
- [DllImport("advapi32.dll")]
- public static extern void CredFree(IntPtr cred);
- [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]
- public class CREDENTIAL{public uint Flags;public uint Type;public string TargetName;public string Comment;public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;public uint CredentialBlobSize;public IntPtr CredentialBlob;public uint Persist;public uint AttributeCount;public IntPtr Attributes;public string TargetAlias;public string UserName;}
- public static void Write(string t,string v){
-  byte[] b=System.Text.Encoding.UTF8.GetBytes(v);GCHandle h=GCHandle.Alloc(b,GCHandleType.Pinned);
-  var c=new CREDENTIAL();c.Type=1;c.TargetName=t;c.CredentialBlobSize=(uint)b.Length;c.CredentialBlob=h.AddrOfPinnedObject();c.Persist=2;c.UserName="dsh";
-  if(!CredWriteW(ref c,0))throw new Exception("CredWriteW err "+Marshal.GetLastWin32Error());h.Free();}
- public static string Read(string t){
-  IntPtr p;if(!CredReadW(t,1,0,out p))return null;
-  var c=(CREDENTIAL)Marshal.PtrToStructure(p,typeof(CREDENTIAL));
-  byte[] b=new byte[c.CredentialBlobSize];Marshal.Copy(c.CredentialBlob,b,0,b.Length);CredFree(p);
-  return System.Text.Encoding.UTF8.GetString(b);}
-}`;
-
-function credmanRun(psExpr) {
-  const args = ['-NoProfile', '-NonInteractive', '-Command',
-    `Add-Type -TypeDefinition '${WIN_CRED_PS.replace(/'/g, "''")}'; ${psExpr}`];
-  return execFileSync('powershell.exe', args, { encoding: 'utf8', timeout: 20000 }).trim();
-}
-
-/* --- 兜底加密文件（机器指纹派生密钥） --- */
+/* ---------------- 凭据保险箱：机器指纹派生密钥 + AES-256-GCM ----------------
+ * 唯一方案，纯 Node 标准库，三个平台行为完全一致，零平台 API 依赖。
+ *   密钥 = PBKDF2(机器指纹 + 开源盐)，算法与盐公开无妨——熵来自每台机器
+ *   出厂唯一的指纹（darwin IOPlatformUUID / win32 MachineGuid / linux machine-id），
+ *   拿到密文+全部源码、但没有本机指纹，解不开；只有运行在本机的插件能解。
+ * json 只存 tokenRef/secretRef 标记；密文在 ~/.dsh/mcp-connectors.vault。 */
+const CRED_SALT = 'dsh-mcp-connectors-vault-v1';
+const CRED_CACHE = new Map(); // 'kind:serverName' -> value（进程内缓存）
 const VAULT_FILE = () => `${homedir()}/.dsh/mcp-connectors.vault`;
-function vaultKey() {
-  let mid = '';
+
+function machineId() {
   try {
     if (platform() === 'darwin') {
-      mid = execFileSync('ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], { encoding: 'utf8' })
+      return execFileSync('ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], { encoding: 'utf8' })
         .split('\n').find((l) => l.includes('IOPlatformUUID'))?.split('"').slice(-2)[0] ?? '';
-    } else if (platform() === 'win32') {
-      mid = execFileSync('reg', ['query', 'HKLM\\SOFTWARE\\Microsoft\\Cryptography', '/v', 'MachineGuid'], { encoding: 'utf8' })
-        .split('\n').find((l) => l.includes('REG_SZ'))?.trim().split(/\s+/).pop() ?? '';
-    } else {
-      mid = readFileSync('/etc/machine-id', 'utf8').trim();
     }
-  } catch { /* 指纹不可用时退化为静态派生（仍是加密文件，防顺手读取） */ }
-  return pbkdf2Sync(`dsh-mcp-connectors|${mid}`, 'dsh-mcp-connectors-static-salt', 120000, 32, 'sha256');
+    if (platform() === 'win32') {
+      return execFileSync('reg', ['query', 'HKLM\\SOFTWARE\\Microsoft\\Cryptography', '/v', 'MachineGuid'], { encoding: 'utf8' })
+        .split('\n').find((l) => l.includes('REG_SZ'))?.trim().split(/\s+/).pop() ?? '';
+    }
+    return readFileSync('/etc/machine-id', 'utf8').trim();
+  } catch {
+    // 指纹不可用：退化为静态派生。磁盘仍无明文，但密文离开本机也可解（降级，尽力而为）
+    return '';
+  }
+}
+
+let VAULT_KEY = null;
+function vaultKey() {
+  if (!VAULT_KEY) {
+    VAULT_KEY = pbkdf2Sync(`dsh-mcp-connectors|${machineId()}`, CRED_SALT, 120000, 32, 'sha256');
+  }
+  return VAULT_KEY;
 }
 
 function vaultLoad() {
@@ -103,7 +65,7 @@ function vaultLoad() {
 function vaultSave(v) { writeFileSync(VAULT_FILE(), JSON.stringify(v)); }
 
 function vaultEncrypt(key, plain) {
-  const iv = randomUUID().replace(/-/g, '').slice(0, 24); // 12 字节 hex
+  const iv = randomUUID().replace(/-/g, '').slice(0, 24); // 12 字节
   const cipher = createCipheriv('aes-256-gcm', key, Buffer.from(iv, 'hex'));
   const data = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]).toString('base64');
   return { iv, tag: cipher.getAuthTag().toString('base64'), data };
@@ -116,28 +78,19 @@ function vaultDecrypt(key, box) {
   } catch { return ''; }
 }
 
-/* --- 统一入口 --- */
+function credKey(kind, serverName) { return `${kind}:${serverName}`; }
+
+/** 统一入口：跨平台唯一实现（vault）。 */
 function credSet(kind, serverName, value) {
   const key = credKey(kind, serverName);
   try {
-    const mode = credMode();
-    if (mode === 'keychain') {
-      execFileSync('security', ['add-generic-password', '-s', CRED_SERVICE, '-a', key, '-w', value, '-U'], { stdio: 'ignore' });
-    } else if (mode === 'credman') {
-      credmanRun(`[CredMan]::Write('${CRED_SERVICE}:${key}','${value.replace(/'/g, "''")}')`);
-    } else if (mode === 'secret') {
-      execFileSync('secret-tool', ['store', '--label=' + CRED_SERVICE, 'service', CRED_SERVICE, 'account', key, key], {
-        input: value, stdio: ['pipe', 'ignore', 'ignore'],
-      });
-    } else {
-      const v = vaultLoad();
-      v.items[key] = vaultEncrypt(vaultKey(), value);
-      vaultSave(v);
-    }
+    const v = vaultLoad();
+    v.items[key] = vaultEncrypt(vaultKey(), value);
+    vaultSave(v);
     CRED_CACHE.set(key, value);
     return true;
   } catch (e) {
-    dbg(`凭据写入失败（${key}@${CRED_MODE}）：${String(e?.message ?? e).split('\n')[0].slice(0, 120)}`);
+    dbg(`凭据写入失败（${key}）：${String(e?.message ?? e).split('\n')[0].slice(0, 120)}`);
     return false;
   }
 }
@@ -145,57 +98,57 @@ function credSet(kind, serverName, value) {
 function credGet(kind, serverName) {
   const key = credKey(kind, serverName);
   if (CRED_CACHE.has(key)) return CRED_CACHE.get(key);
-  try {
-    const mode = credMode();
-    let val = '';
-    if (mode === 'keychain') {
-      val = execFileSync('security', ['find-generic-password', '-s', CRED_SERVICE, '-a', key, '-w'], { encoding: 'utf8' }).trim();
-    } else if (mode === 'credman') {
-      val = credmanRun(`[CredMan]::Read('${CRED_SERVICE}:${key}')`);
-    } else if (mode === 'secret') {
-      val = execFileSync('secret-tool', ['lookup', 'service', CRED_SERVICE, 'account', key], { encoding: 'utf8' }).trim();
-    } else {
-      const box = vaultLoad().items?.[key];
-      val = box ? vaultDecrypt(vaultKey(), box) : '';
-    }
-    if (val) CRED_CACHE.set(key, val);
-    return val;
-  } catch {
-    return '';
-  }
+  const box = vaultLoad().items?.[key];
+  const val = box ? vaultDecrypt(vaultKey(), box) : '';
+  if (val) CRED_CACHE.set(key, val);
+  return val;
 }
 
 function credDelete(kind, serverName) {
   const key = credKey(kind, serverName);
   CRED_CACHE.delete(key);
   try {
-    const mode = credMode();
-    if (mode === 'keychain') {
-      execFileSync('security', ['delete-generic-password', '-s', CRED_SERVICE, '-a', key], { stdio: 'ignore' });
-    } else if (mode === 'credman') {
-      execFileSync('cmdkey', [`/generic:${CRED_SERVICE}:${key}`, '/delete'], { stdio: 'ignore' });
-    } else if (mode === 'secret') {
-      execFileSync('secret-tool', ['clear', 'service', CRED_SERVICE, 'account', key], { stdio: 'ignore' });
-    } else {
-      const v = vaultLoad();
-      delete v.items?.[key];
-      vaultSave(v);
-    }
+    const v = vaultLoad();
+    delete v.items?.[key];
+    vaultSave(v);
   } catch { /* 不存在即无妨 */ }
 }
 
-/** 兼容别名（历史命名） */
-const keychainSet = credSet, keychainGet = credGet, keychainDelete = credDelete;
+/** 一次性迁移：v0.5.x 曾把凭据存入 macOS 钥匙串；搬入 vault 并清理钥匙串条目。
+ *  仅 darwin 执行，凭据全程在内存中转；失败无害（用户重新粘贴 token 即可）。 */
+function migrateFromKeychain(connectors) {
+  if (platform() !== 'darwin') return;
+  for (const c of connectors) {
+    for (const kind of ['token', 'secret']) {
+      if (kind === 'token' && !c.tokenRef) continue;
+      if (kind === 'secret' && !c.secretRef) continue;
+      if (credGet(kind, c.serverName)) continue; // vault 已有
+      const key = credKey(kind, c.serverName);
+      let legacy = '';
+      try {
+        legacy = execFileSync('security', ['find-generic-password', '-s', 'dsh-mcp-connectors', '-a', key, '-w'], { encoding: 'utf8' }).trim();
+      } catch { continue; }
+      if (legacy) {
+        if (credSet(kind, c.serverName, legacy)) {
+          try { execFileSync('security', ['delete-generic-password', '-s', 'dsh-mcp-connectors', '-a', key], { stdio: 'ignore' }); } catch { /* ignore */ }
+          dbg(`migrate: ${key} keychain -> vault`);
+        }
+      }
+    }
+  }
+}
 
-/** 读取连接器凭据：优先钥匙串；兼容迁移前 json 中的明文（读到后立即搬入钥匙串并抹除）。 */
+/** 兼容别名（历史命名） */
+
+/** 读取连接器凭据：优先保险箱；兼容迁移前 json 中的明文（读到后立即搬入保险箱并抹除）。 */
 function tokenOf(c) {
-  if (c.tokenRef) return keychainGet('token', c.serverName);
+  if (c.tokenRef) return credGet('token', c.serverName);
   if (c.token) {
-    if (keychainSet('token', c.serverName, c.token)) {
+    if (credSet('token', c.serverName, c.token)) {
       c.tokenRef = true;
       delete c.token;
       migratePersist('token', c.serverName);
-      return keychainGet('token', c.serverName);
+      return credGet('token', c.serverName);
     }
     return c.token;
   }
@@ -203,13 +156,13 @@ function tokenOf(c) {
 }
 
 function secretOf(c) {
-  if (c.secretRef) return keychainGet('secret', c.serverName);
+  if (c.secretRef) return credGet('secret', c.serverName);
   if (c.secret) {
-    if (keychainSet('secret', c.serverName, c.secret)) {
+    if (credSet('secret', c.serverName, c.secret)) {
       c.secretRef = true;
       delete c.secret;
       migratePersist('secret', c.serverName);
-      return keychainGet('secret', c.serverName);
+      return credGet('secret', c.serverName);
     }
     return c.secret;
   }
@@ -275,7 +228,7 @@ function sanitizeConnector(input) {
     c.corpid = corpid;
     // '●' 是界面打码值（未修改），由 /save 的保留逻辑回填真实凭据
     if (secret !== '●') {
-      if (keychainSet('secret', serverName, secret)) c.secretRef = true;
+      if (credSet('secret', serverName, secret)) c.secretRef = true;
       else c.secret = secret;
     }
     const agentid = parseInt(String(input.agentid ?? ''), 10);
@@ -305,9 +258,9 @@ function sanitizeConnector(input) {
         ?? '';
     }
     token = token.replace(/["'”“]/g, '').trim();
-    // 凭据入钥匙串，json 只存引用；明文绝不落盘
+    // 凭据入加密保险箱，json 只存引用；明文绝不落盘
     if (token && token !== '●') {
-      if (keychainSet('token', serverName, token)) c.tokenRef = true;
+      if (credSet('token', serverName, token)) c.tokenRef = true;
       else c.token = token; // 钥匙串不可用时退回内存（不落盘：persist 前会再尝试）
     }
     const headers = input.headers && typeof input.headers === 'object' ? StringMap(input.headers) : {};
@@ -400,12 +353,12 @@ export async function apply(ctx, config = {}) {
   let STATE = readState();
 
   const persist = async () => {
-    // 兜底：任何仍在内存的凭据明文，落盘前最后尝试搬入钥匙串
+    // 兜底：任何仍在内存的凭据明文，落盘前最后尝试搬入保险箱
     for (const c of STATE.connectors ?? []) {
-      if (c.token && !c.tokenRef && keychainSet('token', c.serverName, c.token)) {
+      if (c.token && !c.tokenRef && credSet('token', c.serverName, c.token)) {
         c.tokenRef = true; delete c.token;
       }
-      if (c.secret && !c.secretRef && keychainSet('secret', c.serverName, c.secret)) {
+      if (c.secret && !c.secretRef && credSet('secret', c.serverName, c.secret)) {
         c.secretRef = true; delete c.secret;
       }
     }
@@ -1102,7 +1055,7 @@ export async function apply(ctx, config = {}) {
       // token/secret 留空（编辑其他字段）时沿用已存储的凭据，绝不因顺手改动而丢失
       if (!c.token && !c.tokenRef && idx >= 0) {
         const stored = cfg.connectors[idx];
-        if (stored.tokenRef || stored.token) c.tokenRef = true; // 凭据仍在钥匙串/原值中
+        if (stored.tokenRef || stored.token) c.tokenRef = true; // 凭据仍在保险箱/原值中
       }
       if (c.transport === 'wecom' && !c.secret && !c.secretRef && idx >= 0) {
         const storedW = cfg.connectors[idx];
@@ -1126,9 +1079,9 @@ export async function apply(ctx, config = {}) {
       STATE = { ...cfg, connectors: next };
       await unmount(target.serverName, '已删除');
       await persist();
-      // 凭据随连接器一并从钥匙串清除
-      keychainDelete('token', target.serverName);
-      keychainDelete('secret', target.serverName);
+      // 凭据随连接器一并从保险箱清除
+      credDelete('token', target.serverName);
+      credDelete('secret', target.serverName);
       return { ok: true, value: { removed: id } };
     },
 
@@ -1191,8 +1144,8 @@ export async function apply(ctx, config = {}) {
               const cur = currentConfig();
               const idx = cur.connectors.findIndex((x) => x.serverName === serverName);
               if (idx >= 0) {
-                // token 入钥匙串，json 只存引用
-                if (keychainSet('token', serverName, token)) {
+                // token 入保险箱，json 只存引用
+                if (credSet('token', serverName, token)) {
                   STATE = { ...cur, connectors: cur.connectors.map((x, i2) => (i2 === idx ? { ...x, tokenRef: true, token: undefined } : x)) };
                 } else {
                   STATE = { ...cur, connectors: cur.connectors.map((x, i2) => (i2 === idx ? { ...x, token } : x)) };
@@ -1571,15 +1524,17 @@ export async function apply(ctx, config = {}) {
     dbg('plugin teardown: pollers stopped, stdio clients disposed');
   }, 'mcp-connectors: weixin poller cleanup');
 
-  // 启动迁移：把 json 中遗留的凭据明文搬入钥匙串并抹除（tokenOf/secretOf 内联完成）
+  // 启动迁移：钥匙串遗留凭据 → vault；json 明文（更早版本遗留）→ vault
   try {
-    for (const c of currentConfig().connectors) {
+    const cfg0 = currentConfig();
+    migrateFromKeychain(cfg0.connectors);
+    for (const c of cfg0.connectors) {
       if (c.token) tokenOf(c);
       if (c.secret) secretOf(c);
     }
-  } catch (e) { dbg('keychain migrate failed', e); }
+  } catch (e) { dbg('cred migrate failed', e); }
 
   // 启动收敛（不阻塞插件激活）
   syncMounts().catch((e) => warn('启动挂载收敛失败：', e?.message ?? e));
-  log('MCP 连接器中心已就绪（凭据存钥匙串）', `(${ROUTE})`);
+  log('MCP 连接器中心已就绪（凭据存加密保险箱）', `(${ROUTE})`);
 }
