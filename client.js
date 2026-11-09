@@ -67,7 +67,6 @@ window.__ModuleLoader__.load({
         presetGithub: 'GitHub（官方 MCP · 需 Personal Access Token）',
         presetCustom: '自定义 / 其他 MCP 服务',
         composerOpen: '连接器',
-        composerNone: '当前会话未启用任何连接器',
         selectAll: '全选',
         deselectAll: '全部取消',
         loadFailed: '加载失败',
@@ -125,7 +124,6 @@ window.__ModuleLoader__.load({
         presetGithub: 'GitHub (official MCP · needs a Personal Access Token)',
         presetCustom: 'Custom MCP server',
         composerOpen: 'Connectors',
-        composerNone: 'No connector enabled in this conversation',
         selectAll: 'Select all',
         deselectAll: 'Deselect all',
         loadFailed: 'Failed to load',
@@ -676,8 +674,7 @@ window.__ModuleLoader__.load({
                     onChange: () => toggleServer(c.serverName),
                   }),
                   h('span', { className: 'mcx-popover-name' }, c.title || c.serverName),
-                  h('span', { className: 'mcx-popover-sub' }, c.transport))),
-                chosen && chosen.size === 0 && h('div', { className: 'mcx-popover-empty' }, t('composerNone')))));
+                  h('span', { className: 'mcx-popover-sub' }, c.transport))))));
     }
 
     /* ---------------- 样式（仅主题 token） ---------------- */
