@@ -1,5 +1,5 @@
 /**
- * @local/mcp-connectors — MCP 连接器中心（Host 侧）
+ * @wfm-cn/dsh-mcp-connectors — MCP 连接器中心（Host 侧）
  *
  * 通道说明：运行期安装的插件拿不到编译期生成的 `remote.*` 命名空间，
  * 因此 Host↔Client 用宿主提供的 HTTP 路由（ctx.webServer.register）：

@@ -1,12 +1,12 @@
 /**
- * @local/mcp-connectors — MCP 连接器中心（Client 侧）
+ * @wfm-cn/dsh-mcp-connectors — MCP 连接器中心（Client 侧）
  *
  *  - sidebar.panellist 图标 + `main` 面板页（卡片流，hover 出现编辑/开关）；
  *  - conversation.input.left 会话内连接器选择下拉（向上弹出，按会话生效）；
  *  - 所有 Host 交互走 ctx.remote['mcp-connectors'].*。
  */
 window.__ModuleLoader__.load({
-  id: '@local/mcp-connectors',
+  id: '@wfm-cn/dsh-mcp-connectors',
   factory(require) {
     const React = require('react');
     const h = React.createElement;
