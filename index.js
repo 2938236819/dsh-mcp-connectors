@@ -240,6 +240,18 @@ function sanitizeConnector(input) {
     c.command = String(input.command).trim();
     c.args = Array.isArray(input.args) ? input.args.map(String) : [];
     c.env = input.env && typeof input.env === 'object' ? StringMap(input.env) : {};
+    // 预设（MySQL/Redis）的密码凭据通道：标记 + vault 存储，json 无明文
+    if (typeof input.credEnv === 'string' && /^[A-Z_][A-Z0-9_]{0,63}$/.test(input.credEnv)) c.credEnv = input.credEnv;
+    if (input.credArg === '--password') c.credArg = input.credArg;
+    if (c.credEnv || c.credArg) {
+      const cred = String(input.token ?? '').trim();
+      if (cred && cred !== '●') {
+        if (credSet('token', serverName, cred)) c.tokenRef = true;
+        else c.token = cred;
+      } else if (cred === '●') {
+        c.tokenRef = true; // 界面打码值：沿用已存凭据
+      }
+    }
     // 微信连接器：自动回复注入的目标会话
     const targetSession = String(input.targetSession ?? '').trim();
     if (targetSession) c.targetSession = targetSession;
@@ -289,6 +301,8 @@ function signature(c) {
     command: c.command,
     args: c.args,
     env: c.env,
+    credEnv: c.credEnv,
+    credArg: c.credArg,
   });
 }
 
@@ -418,8 +432,14 @@ export async function apply(ctx, config = {}) {
       if (/^(npx|npm|pnpm|yarn|bunx?|uvx?|python3?|node)$/i.test(s)) command = `${s}.cmd`;
       else if (/[\\/ ]/.test(s) && !/\.(cmd|exe|bat|ps1)$/i.test(s)) command = s; // 完整路径交给 shell 解析
     }
+    // 预设连接器（MySQL/Redis 等）的密码保存在 vault（token 通道），
+    // 启动子进程时注入环境变量或命令行参数，磁盘与 json 均无明文
+    const cred = c.credEnv || c.credArg ? tokenOf(c) : '';
+    if (c.credArg && cred) {
+      c = { ...c, args: [...(c.args ?? []), c.credArg, cred] };
+    }
     const child = spawn(command, c.args ?? [], {
-      env: { ...process.env, ...(c.env ?? {}) },
+      env: { ...process.env, ...(c.env ?? {}), ...(c.credEnv && cred ? { [c.credEnv]: cred } : {}) },
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: isWin,
       windowsHide: true,
@@ -525,7 +545,11 @@ export async function apply(ctx, config = {}) {
     const props = schema?.properties ?? {};
     const required = new Set(schema?.required ?? []);
     for (const [key, def] of Object.entries(props)) {
-      const field = { description: def.description ?? undefined };
+      // 远端 schema 的 description 偶有非字符串（null/对象），统一字符串化；
+      // 注意：undefined 时必须完全省略该键（schemastery 校验器对存在但 undefined 的键报错）
+      const rawDesc = typeof def.description === 'string' ? def.description
+        : (def.description == null ? '' : JSON.stringify(def.description));
+      const field = rawDesc ? { description: rawDesc } : {};
       if (Array.isArray(def.enum) && def.enum.length) field.enum = def.enum;
       switch (def.type) {
         case 'string': field.type = 'string'; break;

@@ -69,6 +69,17 @@ window.__ModuleLoader__.load({
         wxBindTimeout: '绑定未完成，请重新点击扫码绑定',
         presetWechat: '微信 (ClawBot)',
         presetChrome: '谷歌浏览器（Chrome DevTools）',
+        presetMysql: 'MySQL 数据库（本机 stdio）',
+        presetRedis: 'Redis（本机 stdio）',
+        descMysql: '连接 MySQL：查询表结构、执行 SQL（需本机已装 uv）',
+        descRedis: '连接 Redis：读写键值、执行命令（需本机已装 uv）',
+        fieldHost: '主机（host）',
+        fieldPort: '端口（port）',
+        fieldUser: '用户名',
+        fieldPassword: '密码',
+        fieldDatabase: '数据库名（database）',
+        fieldDbNumber: '数据库编号（db）',
+        dbCredHint: '密码保存在本机加密保险箱，不会明文落盘。',
         chromeHint: '无需令牌。保存后自动通过 npx 启动 chrome-devtools-mcp 并连接本机谷歌浏览器；首次使用请确保已安装 Chrome。',
         testConn: '测试连接',
         testing: '测试中',
@@ -144,6 +155,17 @@ window.__ModuleLoader__.load({
         wxBindTimeout: 'Not completed. Click the button to try again',
         presetWechat: 'WeChat (ClawBot)',
         presetChrome: 'Google Chrome (Chrome DevTools)',
+        presetMysql: 'MySQL (local stdio)',
+        presetRedis: 'Redis (local stdio)',
+        descMysql: 'Connect MySQL: inspect schema, run SQL (requires uv)',
+        descRedis: 'Connect Redis: read/write keys, run commands (requires uv)',
+        fieldHost: 'Host',
+        fieldPort: 'Port',
+        fieldUser: 'Username',
+        fieldPassword: 'Password',
+        fieldDatabase: 'Database',
+        fieldDbNumber: 'Database number (db)',
+        dbCredHint: 'Password is stored in the local encrypted vault, never in plaintext.',
         chromeHint: 'No token needed. Saving launches chrome-devtools-mcp via npx and connects to your local Chrome; make sure Chrome is installed.',
         testConn: 'Test connection',
         testing: 'Testing',
@@ -484,6 +506,63 @@ window.__ModuleLoader__.load({
           H('div', { className: 'mcx-auth-hint' }, t('chromeHint')),
       },
       {
+        id: 'mysql',
+        icon: '🐬',
+        labelKey: 'presetMysql',
+        descKey: 'descMysql',
+        lockTemplate: true,
+        // 连接参数序列化为 MYSQL_* 环境变量；密码走 token 通道（vault）注入 MYSQL_PASSWORD
+        envPrefix: 'MYSQL',
+        connFields: ['host', 'port', 'user', 'database'],
+        template: {
+          title: 'MySQL', serverName: 'mysql', transport: 'stdio',
+          command: 'uvx', args: ['--from', 'mysql-mcp-server', 'mysql_mcp_server'],
+          credEnv: 'MYSQL_PASSWORD',
+        },
+        renderAuth: ({ h: H, Field: F, inputCls: ic, t, draft, setDraft, set, initial }) => {
+          const p = draft.connParams ?? {};
+          const setP = (k) => (e) => setDraft((d) => ({ ...d, connParams: { ...(d.connParams ?? {}), [k]: e.target.value } }));
+          return H(React.Fragment, null,
+            H(F, { label: t('fieldHost') }, H('input', { className: ic, value: p.host ?? '', onChange: setP('host'), placeholder: '127.0.0.1' })),
+            H(F, { label: t('fieldPort') }, H('input', { className: ic, value: p.port ?? '', onChange: setP('port'), placeholder: '3306', inputMode: 'numeric' })),
+            H(F, { label: t('fieldUser') }, H('input', { className: ic, value: p.user ?? '', onChange: setP('user'), placeholder: 'root' })),
+            H(F, { label: t('fieldPassword') }, H('input', { className: ic, type: 'password', value: draft.token === '●' ? '' : draft.token ?? '', onChange: set('token'), placeholder: initial?.token === '●' ? '已保存 · 留空保持不变' : '' })),
+            H(F, { label: t('fieldDatabase') }, H('input', { className: ic, value: p.database ?? '', onChange: setP('database'), placeholder: 'mydb' })),
+            H('div', { className: 'mcx-auth-hint' }, t('dbCredHint')));
+        },
+      },
+      {
+        id: 'redis',
+        icon: '🟥',
+        labelKey: 'presetRedis',
+        descKey: 'descRedis',
+        lockTemplate: true,
+        // 连接参数记录为 REDIS_* 环境变量，启动时组装为命令行参数；密码走 token 通道（vault）注入 --password
+        envPrefix: 'REDIS',
+        connFields: ['host', 'port', 'db', 'ssl'],
+        argsFromConn: (p) => ['redis-mcp-server',
+          '--host', String(p.host || '127.0.0.1'),
+          '--port', String(p.port || '6379'),
+          ...(p.db !== '' && p.db != null ? ['--db', String(p.db)] : []),
+          ...(p.ssl ? ['--ssl'] : [])],
+        template: {
+          title: 'Redis', serverName: 'redis', transport: 'stdio',
+          command: 'uvx', args: ['redis-mcp-server'],
+          credArg: '--password',
+        },
+        renderAuth: ({ h: H, Field: F, inputCls: ic, t, draft, setDraft, set, initial }) => {
+          const p = draft.connParams ?? {};
+          const setP = (k) => (e) => setDraft((d) => ({ ...d, connParams: { ...(d.connParams ?? {}), [k]: e.target.checked !== undefined && k === 'ssl' ? e.target.checked : e.target.value } }));
+          return H(React.Fragment, null,
+            H(F, { label: t('fieldHost') }, H('input', { className: ic, value: p.host ?? '', onChange: setP('host'), placeholder: '127.0.0.1' })),
+            H(F, { label: t('fieldPort') }, H('input', { className: ic, value: p.port ?? '', onChange: setP('port'), placeholder: '6379', inputMode: 'numeric' })),
+            H(F, { label: t('fieldDbNumber') }, H('input', { className: ic, value: p.db ?? '', onChange: setP('db'), placeholder: '0', inputMode: 'numeric' })),
+            H(F, { label: 'SSL' }, H('input', { type: 'checkbox', checked: Boolean(p.ssl), onChange: setP('ssl') })),
+            H(F, { label: t('fieldPassword') }, H('input', { className: ic, type: 'password', value: draft.token === '●' ? '' : draft.token ?? '', onChange: set('token'), placeholder: initial?.token === '●' ? '已保存 · 留空保持不变' : '（无密码可留空）' })),
+            H('div', { className: 'mcx-auth-hint' }, t('dbCredHint')));
+        },
+      },
+      {
         id: 'custom',
         icon: '⚙️',
         labelKey: 'presetCustom',
@@ -507,6 +586,8 @@ window.__ModuleLoader__.load({
       const sn = String(c.serverName ?? '');
       const url = String(c.url ?? '');
       if (sn === 'chrome-devtools' || /chrome-devtools-mcp/.test(`${c.command ?? ''} ${(c.args ?? []).join(' ')}`)) return 'chrome';
+      if (sn === 'mysql' || /mysql[_-]mcp/.test(`${c.command ?? ''} ${(c.args ?? []).join(' ')}`)) return 'mysql';
+      if (sn === 'redis' || /redis-mcp-server/.test(`${c.command ?? ''} ${(c.args ?? []).join(' ')}`)) return 'redis';
       if (c.auth === 'wxqr' || sn === 'weixin-mcp') return 'wechat';
       if (c.auth === 'wps' || sn === 'kdocs-wps' || /mcp-center\.wps\.cn/.test(url)) return 'kdocs';
       if (c.auth === 'pat' || sn === 'github' || /api\.githubcopilot\.com/.test(url)) return 'github';
@@ -548,6 +629,15 @@ window.__ModuleLoader__.load({
         command: '', argsText: '', envText: '', note: '', enabled: true,
         ...(initial && initial.env ? { envText: Object.entries(initial.env).map(([k, v]) => `${k}=${v}`).join('\n') } : {}),
         ...(initial && initial.args ? { argsText: initial.args.join('\n') } : {}),
+        // 数据库预设：从已存 env 还原连接参数表单（redis 的 ssl 存的 'true' 字符串转布尔）
+        ...(initial?.env && DEF_BY_ID[inferType(initial)]?.connFields
+          ? {
+              connParams: Object.fromEntries(
+                DEF_BY_ID[inferType(initial)].connFields
+                  .map((f) => [f, initial.env[`${DEF_BY_ID[inferType(initial)].envPrefix}_${f.toUpperCase()}`] ?? ''])
+                  .map(([f, v]) => [f, f === 'ssl' ? v === 'true' : v])),
+            }
+          : {}),
         ...(initial ?? {}),
       }));
       const [busy, setBusy] = useState(false);
@@ -596,7 +686,25 @@ window.__ModuleLoader__.load({
               String(draft.envText ?? '').split('\n').map((l) => l.trim())
                 .filter((l) => l && l.includes('='))
                 .map((l) => { const eq = l.indexOf('='); return [l.slice(0, eq).trim(), l.slice(eq + 1).trim()]; }));
-            delete connector.url; delete connector.token;
+            // 数据库预设：连接参数（host/port/...）序列化为 env；redis 动态组装 args
+            if (isPreset && def.connFields) {
+              const p = draft.connParams ?? {};
+              const env2 = {};
+              for (const f of def.connFields) {
+                if (p[f] !== '' && p[f] != null && p[f] !== false) env2[`${def.envPrefix}_${f.toUpperCase()}`] = String(p[f]);
+              }
+              connector.env = { ...connector.env, ...env2 };
+              if (def.argsFromConn) connector.args = def.argsFromConn(p);
+            }
+            // 凭据通道：预设声明 credEnv/credArg 时，密码走 vault（token），否则不保存 token
+            if (isPreset && def.template?.credEnv) connector.credEnv = def.template.credEnv;
+            if (isPreset && def.template?.credArg) connector.credArg = def.template.credArg;
+            if (connector.credEnv || connector.credArg) {
+              connector.token = draft.token || (initial?.token === '●' ? '●' : '');
+            } else {
+              delete connector.token;
+            }
+            delete connector.url;
           } else {
             connector.url = draft.url; connector.token = draft.token;
             if (draft.headers) connector.headers = draft.headers;
