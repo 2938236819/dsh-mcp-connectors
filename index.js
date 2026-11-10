@@ -944,7 +944,7 @@ export async function apply(ctx, config = {}) {
       dbg(`gate: agent ${agent?.id} not ready (no tools.restrict), pending`);
       return;
     }
-    const sessionId = String(agent.session?.id ?? agent.id ?? '');
+    const sessionId = resolveSessionForGuard(agent); // root 按记录；子代理继承活跃 root 会话
     const allowed = enabledServersOf(currentConfig(), sessionId);
     const byServer = mountedToolNamesByServer();
     // 还没挂载完（工具尚未注册）时调用 restrict 会因 unknown name 抛错：留到挂载后再试
@@ -987,6 +987,33 @@ export async function apply(ctx, config = {}) {
   /** 执行层强制校验（治本）：tools.guard 在每次工具调用前同步执行，
    *  无论 root 会话还是 subagent、无论 restrict 是否已及时应用，都逃不过这里。
    *  会话未启用对应连接器 → 直接拒绝调用。 */
+  /** 执行层会话解析：root 会话按记录（fail-closed）；子代理（非 session- 前缀的裸 id）
+   *  继承当前活跃 root 会话的连接器授权——平台未在子代理上暴露父会话，
+   *  而发起子代理时其父会话必然处于运行态，以此为锚点继承。 */
+  function resolveSessionForGuard(agent) {
+    const sid = String(agent?.session?.id ?? agent?.id ?? '');
+    const cfg = currentConfig();
+    if (cfg.sessions?.[sid] != null) return sid; // 有记录：按记录
+    if (sid.startsWith('session-')) return sid;  // root 会话无记录：fail-closed
+    // 子代理：找活跃 root 会话（父会话发起子代理后处于运行/等待态）
+    const agents = AGENTS?.list?.() ?? [];
+    let dbgRoots = '';
+    for (const a of agents) {
+      const asid = String(a?.session?.id ?? '');
+      if (!asid.startsWith('session-')) continue;
+      // phase 可能是字符串或对象（含 status/value 等字段），统一字符串化后匹配
+      const phRaw = a?.phase;
+      const ph = typeof phRaw === 'string' ? phRaw : (phRaw ? JSON.stringify(phRaw) : '');
+      dbgRoots += `${asid.slice(0, 18)}:${ph.slice(0, 40)},`;
+      if (/run|active|think|turn|wait/i.test(ph)) {
+        dbg(`guard: subagent ${sid} inherits active root ${asid}`);
+        return asid;
+      }
+    }
+    dbg(`guard: subagent ${sid} no active root [${dbgRoots}]`);
+    return sid; // 找不到活跃 root：维持 fail-closed
+  }
+
   ctx.effect(() => {
     if (typeof ctx.tools?.guard !== 'function') {
       warn('宿主 dsh-tools 不支持 tools.guard，仅有 restrict 门控（存在应用时序窗口）');
@@ -998,7 +1025,7 @@ export async function apply(ctx, config = {}) {
     const serverName = m[1];
     if (!MOUNTED.has(serverName)) return undefined; // 不是本插件挂载的
     const agent = execution?.agent;
-    const sessionId = String(agent?.session?.id ?? agent?.id ?? '');
+    const sessionId = resolveSessionForGuard(agent);
     const allowed = enabledServersOf(currentConfig(), sessionId);
     if (!allowed.has(serverName)) {
       dbg(`guard: deny ${execution.name} for session=${sessionId || '(no-agent)'} (${serverName} not enabled)`);
